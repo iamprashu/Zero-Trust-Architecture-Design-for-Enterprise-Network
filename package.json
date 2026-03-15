@@ -1,0 +1,25 @@
+{
+  "name": "zero-trust-architecture-design-for-enterprise-network",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/iamprashu/Zero-Trust-Architecture-Design-for-Enterprise-Network.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/iamprashu/Zero-Trust-Architecture-Design-for-Enterprise-Network/issues"
+  },
+  "homepage": "https://github.com/iamprashu/Zero-Trust-Architecture-Design-for-Enterprise-Network#readme",
+  "dependencies": {
+    "@prisma/client": "^7.5.0",
+    "prisma": "^7.5.0"
+  }
+}
