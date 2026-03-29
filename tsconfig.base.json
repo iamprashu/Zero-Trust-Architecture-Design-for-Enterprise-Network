@@ -1,0 +1,21 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "CommonJS",
+    "moduleResolution": "Node",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "declaration": true,
+    "sourceMap": true,
+    "baseUrl": ".",
+    "types": ["node"],
+    "paths": {
+      "@repo/db/*": ["packages/db/src/*"],
+      "@repo/types/*": ["packages/types/src/*"],
+      "@repo/utils/*": ["packages/utils/src/*"],
+      "@repo/logger/*": ["packages/logger/src/*"],
+      "@repo/config/*": ["packages/config/*"]
+    }
+  }
+}
