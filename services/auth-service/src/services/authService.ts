@@ -36,6 +36,16 @@ class AuthService {
       throw new Error("User already exists");
     }
 
+    // Validate role if provided
+    let userRole = "USER";
+    if (data.role) {
+      const validRoles = ["USER", "ADMIN", "SUPER_ADMIN"];
+      if (!validRoles.includes(data.role.toUpperCase())) {
+        throw new Error("Invalid role provided");
+      }
+      userRole = data.role.toUpperCase();
+    }
+
     const saltRounds = parseInt(process.env.BCRYPT_ROUNDS || "12");
     const hashedPassword = await bcrypt.hash(data.password, saltRounds);
 
@@ -43,6 +53,7 @@ class AuthService {
       data: {
         email: data.email,
         password: hashedPassword,
+        role: userRole,
       },
     });
 

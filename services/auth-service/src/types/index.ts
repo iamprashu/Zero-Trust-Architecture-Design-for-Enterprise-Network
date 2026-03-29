@@ -2,11 +2,13 @@ export interface User {
   id: string;
   email: string;
   password: string;
+  role: string;
 }
 
 export interface CreateUserRequest {
   email: string;
   password: string;
+  role?: string;
 }
 
 export interface LoginRequest {
