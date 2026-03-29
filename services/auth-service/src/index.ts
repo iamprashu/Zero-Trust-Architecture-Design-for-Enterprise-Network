@@ -1,11 +1,23 @@
 import express from "express";
-import prisma from "@repo/db";
+import { prisma } from "@repo/db";
 
 const app = express();
 
-app.get("/users", async (req, res) => {
-  const users = await prisma.user.findMany();
-  res.json(users);
+app.use(express.json());
+
+app.post("/users", async (req, res) => {
+  try {
+    const user = await prisma.user.create({
+      data: {
+        email: req.body.email,
+        password: req.body.password,
+      },
+    });
+    return res.json(user);
+  } catch (err) {
+    console.log(err.message);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.listen(3001, () => {
