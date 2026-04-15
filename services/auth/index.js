@@ -54,7 +54,53 @@ const bootstrapSuperadmin = async () => {
 app.use('/health', (req, res) => res.status(200).json({ status: 'ok', service: 'auth-service' }));
 app.use('/api', routes);
 
+const bootstrapSeedData = async () => {
+  try {
+    const permissions = [
+      { name: 'READ_TRANSACTION', description: 'Can read transactions' },
+      { name: 'CREATE_TRANSACTION', description: 'Can create transactions' },
+      { name: 'READ_ACCOUNT', description: 'Can read account details' },
+      { name: 'TRANSFER_MONEY', description: 'Can transfer money' }
+    ];
+
+    for (const p of permissions) {
+      await Permission.updateOne({ name: p.name }, { $set: p }, { upsert: true });
+    }
+
+    const adminRole = await Role.findOneAndUpdate(
+      { name: 'admin' },
+      { $set: { permissions: permissions.map(p => p.name) } },
+      { upsert: true, new: true }
+    );
+
+    const userRole = await Role.findOneAndUpdate(
+      { name: 'user' },
+      { $set: { permissions: ['READ_TRANSACTION', 'READ_ACCOUNT', 'TRANSFER_MONEY'] } },
+      { upsert: true, new: true }
+    );
+
+    const salt = await bcrypt.genSalt(10);
+    const password = await bcrypt.hash('password123', salt);
+
+    await User.updateOne(
+      { email: 'admin@bank.local' },
+      { $setOnInsert: { password, role: 'admin' } },
+      { upsert: true }
+    );
+
+    await User.updateOne(
+      { email: 'user@bank.local' },
+      { $setOnInsert: { password, role: 'user' } },
+      { upsert: true }
+    );
+    console.log('Seed data initialized (Roles, Permissions, sample users).');
+  } catch (error) {
+    console.error('Error bootstrapping seed data:', error);
+  }
+};
+
 app.listen(PORT, async () => {
   console.log(`Auth service running on port ${PORT}`);
   await bootstrapSuperadmin();
+  await bootstrapSeedData();
 });
