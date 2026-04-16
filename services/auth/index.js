@@ -9,6 +9,7 @@ const cookieParser = require('cookie-parser');
 const app = express();
 app.use(cors());
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 
 // Initialize MongoDB
@@ -60,7 +61,8 @@ const bootstrapSeedData = async () => {
       { name: 'READ_TRANSACTION', description: 'Can read transactions' },
       { name: 'CREATE_TRANSACTION', description: 'Can create transactions' },
       { name: 'READ_ACCOUNT', description: 'Can read account details' },
-      { name: 'TRANSFER_MONEY', description: 'Can transfer money' }
+      { name: 'TRANSFER_MONEY', description: 'Can transfer money' },
+      { name: 'CREATE_ACCOUNT', description: 'Can create user accounts' }
     ];
 
     for (const p of permissions) {
@@ -70,6 +72,24 @@ const bootstrapSeedData = async () => {
     const adminRole = await Role.findOneAndUpdate(
       { name: 'admin' },
       { $set: { permissions: permissions.map(p => p.name) } },
+      { upsert: true, new: true }
+    );
+
+    const managerRole = await Role.findOneAndUpdate(
+      { name: 'manager' },
+      { $set: { permissions: ['CREATE_ACCOUNT', 'READ_ACCOUNT', 'READ_TRANSACTION', 'CREATE_TRANSACTION', 'TRANSFER_MONEY'] } },
+      { upsert: true, new: true }
+    );
+
+    const clerkRole = await Role.findOneAndUpdate(
+      { name: 'clerk' },
+      { $set: { permissions: ['READ_ACCOUNT', 'READ_TRANSACTION', 'CREATE_TRANSACTION', 'TRANSFER_MONEY'] } },
+      { upsert: true, new: true }
+    );
+
+    const tellerRole = await Role.findOneAndUpdate(
+      { name: 'teller' },
+      { $set: { permissions: ['CREATE_TRANSACTION', 'TRANSFER_MONEY'] } },
       { upsert: true, new: true }
     );
 
@@ -85,6 +105,24 @@ const bootstrapSeedData = async () => {
     await User.updateOne(
       { email: 'admin@bank.local' },
       { $setOnInsert: { password, role: 'admin' } },
+      { upsert: true }
+    );
+
+    await User.updateOne(
+      { email: 'manager@bank.local' },
+      { $setOnInsert: { password, role: 'manager' } },
+      { upsert: true }
+    );
+
+    await User.updateOne(
+      { email: 'clerk@bank.local' },
+      { $setOnInsert: { password, role: 'clerk' } },
+      { upsert: true }
+    );
+
+    await User.updateOne(
+      { email: 'teller@bank.local' },
+      { $setOnInsert: { password, role: 'teller' } },
       { upsert: true }
     );
 

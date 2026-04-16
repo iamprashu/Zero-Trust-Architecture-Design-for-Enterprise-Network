@@ -37,6 +37,18 @@ app.get('/api/account', authorize(['READ_ACCOUNT']), (req, res) => {
   res.json({ account });
 });
 
+app.post('/api/account', authorize(['CREATE_ACCOUNT']), (req, res) => {
+  const { accountType, initialDeposit } = req.body;
+  // Mock logic to handle new account creation
+  const newAccount = {
+    accountNumber: Math.floor(1000000000 + Math.random() * 9000000000).toString(),
+    balance: initialDeposit || 0,
+    currency: 'USD',
+    type: accountType || 'CHECKING'
+  };
+  res.status(201).json({ message: 'Account created successfully', account: newAccount });
+});
+
 app.post('/api/transfer', authorize(['TRANSFER_MONEY']), (req, res) => {
   const { expectedAmount, destination } = req.body;
   if (account.balance < expectedAmount) {

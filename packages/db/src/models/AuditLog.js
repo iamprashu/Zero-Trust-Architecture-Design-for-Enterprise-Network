@@ -8,7 +8,7 @@ const auditLogSchema = new mongoose.Schema({
   },
   action: {
     type: String,
-    enum: ['login', 'logout'],
+    enum: ['login', 'logout', 'oauth_authorize'],
     required: true
   },
   timestamp: {
