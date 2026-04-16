@@ -97,7 +97,10 @@ exports.deleteUser = async (req, res) => {
 exports.updateRiskScore = async (req, res) => {
   try {
     const { userId, riskScore } = req.body;
-    const user = await User.findByIdAndUpdate(userId, { riskScore }, { new: true });
+    
+    const updateData = { riskScore, isBlocked: riskScore > 90 };
+    
+    const user = await User.findByIdAndUpdate(userId, updateData, { new: true });
     if (!user) return res.status(404).json({ error: 'User not found' });
     res.json({ message: 'Risk score updated', user });
   } catch (err) {
