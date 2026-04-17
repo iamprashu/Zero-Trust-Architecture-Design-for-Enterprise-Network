@@ -9,55 +9,74 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 5001;
 
-// Mock database
-const transactions = [
-  { id: 1, amount: 500, type: 'CREDIT', date: new Date().toISOString() },
-  { id: 2, amount: 200, type: 'DEBIT', date: new Date().toISOString() }
-];
-
-const account = {
-  accountNumber: '1234567890',
-  balance: 300,
-  currency: 'USD'
-};
+// Mock databases
+let transactions = [];
+let accounts = [];
 
 // APIs
-app.get('/api/transactions', authorize(['READ_TRANSACTION']), (req, res) => {
-  res.json({ transactions });
-});
-
-app.post('/api/transactions', authorize(['CREATE_TRANSACTION']), (req, res) => {
-  const { amount, type } = req.body;
-  const newTx = { id: transactions.length + 1, amount, type, date: new Date().toISOString() };
-  transactions.push(newTx);
-  res.status(201).json(newTx);
-});
-
-app.get('/api/account', authorize(['READ_ACCOUNT']), (req, res) => {
-  res.json({ account });
+app.get('/api/accounts', authorize(['READ_ACCOUNT']), (req, res) => {
+  res.json({ accounts });
 });
 
 app.post('/api/account', authorize(['CREATE_ACCOUNT']), (req, res) => {
-  const { accountType, initialDeposit } = req.body;
-  // Mock logic to handle new account creation
+  const { ownerName, accountType, initialDeposit } = req.body;
+  if (!ownerName) return res.status(400).json({ error: 'Owner Name is required' });
+  
   const newAccount = {
     accountNumber: Math.floor(1000000000 + Math.random() * 9000000000).toString(),
-    balance: initialDeposit || 0,
+    ownerName,
+    balance: parseFloat(initialDeposit) || 0,
     currency: 'USD',
     type: accountType || 'CHECKING'
   };
+  accounts.push(newAccount);
   res.status(201).json({ message: 'Account created successfully', account: newAccount });
 });
 
-app.post('/api/transfer', authorize(['TRANSFER_MONEY']), (req, res) => {
-  const { expectedAmount, destination } = req.body;
-  if (account.balance < expectedAmount) {
-    return res.status(400).json({ error: 'Insufficient funds' });
+app.delete('/api/account/:accountNumber', authorize(['DELETE_ACCOUNT']), (req, res) => {
+  const { accountNumber } = req.params;
+  const initialLength = accounts.length;
+  accounts = accounts.filter(acc => acc.accountNumber !== accountNumber);
+  if (accounts.length === initialLength) {
+    return res.status(404).json({ error: 'Account not found' });
   }
-  account.balance -= expectedAmount;
-  const tx = { id: transactions.length + 1, amount: expectedAmount, type: 'TRANSFER', to: destination, date: new Date().toISOString() };
+  res.json({ message: 'Account deleted successfully' });
+});
+
+app.get('/api/transactions/:accountNumber', authorize(['READ_TRANSACTION']), (req, res) => {
+  const { accountNumber } = req.params;
+  const accountTxs = transactions.filter(tx => tx.accountNumber === accountNumber);
+  res.json({ transactions: accountTxs });
+});
+
+app.post('/api/transactions', authorize(['CREATE_TRANSACTION']), (req, res) => {
+  const { accountNumber, amount, type } = req.body;
+  const account = accounts.find(acc => acc.accountNumber === accountNumber);
+  if (!account) return res.status(404).json({ error: 'Account not found' });
+  
+  const numericAmount = parseFloat(amount);
+  if (type === 'DEBIT') {
+    if (account.balance < numericAmount) return res.status(400).json({ error: 'Insufficient funds' });
+    account.balance -= numericAmount;
+  } else {
+    account.balance += numericAmount;
+  }
+  
+  const newTx = { id: transactions.length + 1, accountNumber, amount: numericAmount, type, date: new Date().toISOString() };
+  transactions.push(newTx);
+  res.status(201).json({ message: 'Transaction successful', transaction: newTx, newBalance: account.balance });
+});
+
+app.post('/api/loan', authorize(['CREATE_LOAN_TRANSACTION']), (req, res) => {
+  const { accountNumber, expectedAmount } = req.body;
+  const account = accounts.find(acc => acc.accountNumber === accountNumber);
+  if (!account) return res.status(404).json({ error: 'Account not found' });
+
+  const numericAmount = parseFloat(expectedAmount);
+  account.balance += numericAmount;
+  const tx = { id: transactions.length + 1, accountNumber, amount: numericAmount, type: 'LOAN', date: new Date().toISOString() };
   transactions.push(tx);
-  res.json({ message: 'Transfer successful', transaction: tx, newBalance: account.balance });
+  res.status(201).json({ message: 'Loan processed successfully', transaction: tx, newBalance: account.balance });
 });
 
 app.listen(PORT, () => {

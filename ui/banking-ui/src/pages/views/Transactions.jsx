@@ -1,54 +1,127 @@
-import { useState, useEffect } from 'react'
-import { apiCall } from '../../utils/api'
+import { useState, useEffect } from 'react';
+import { apiCall } from '../../utils/api';
+import { ArrowLeftRight } from 'lucide-react';
 
 export default function Transactions() {
-  const [txs, setTxs] = useState([])
-  const [error, setError] = useState('')
+  const [accounts, setAccounts] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [selectedAccount, setSelectedAccount] = useState('');
+  const [type, setType] = useState('DEBIT');
+  const [amount, setAmount] = useState('');
+  const [message, setMessage] = useState('');
+  const [processing, setProcessing] = useState(false);
 
   useEffect(() => {
-    apiCall('/transactions')
-      .then(res => setTxs(res.transactions))
-      .catch(err => setError(err.message))
-  }, [])
+    const fetchAccounts = async () => {
+      try {
+        const res = await apiCall('/accounts');
+        setAccounts(res.accounts || []);
+        if (res.accounts && res.accounts.length > 0) {
+          setSelectedAccount(res.accounts[0].accountNumber);
+        }
+      } catch (err) {
+        console.error('Failed to fetch accounts', err);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchAccounts();
+  }, []);
 
-  if (error) return <div style={{ color: 'var(--danger)' }}>{error}</div>
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setMessage('');
+    setProcessing(true);
+
+    try {
+      const res = await apiCall('/transactions', {
+        method: 'POST',
+        body: JSON.stringify({ accountNumber: selectedAccount, type, amount: parseFloat(amount) })
+      });
+      setMessage(`Success! ${res.message}. New Balance: $${res.newBalance.toFixed(2)}`);
+      setAmount('');
+    } catch (err) {
+      setMessage(`Error: ${err.message}`);
+    } finally {
+      setProcessing(false);
+    }
+  };
+
+  if (loading) return <div>Loading...</div>;
 
   return (
-    <div className="glass-card animate-fade-in">
-      <h3 style={{ marginTop: 0, marginBottom: '20px' }}>Recent Transactions</h3>
-      <table className="table-glass">
-        <thead>
-          <tr>
-            <th>Transaction ID</th>
-            <th>Date</th>
-            <th>Type</th>
-            <th>Amount</th>
-          </tr>
-        </thead>
-        <tbody>
-          {txs.map(tx => (
-            <tr key={tx.id}>
-              <td>#{tx.id}</td>
-              <td>{new Date(tx.date).toLocaleString()}</td>
-              <td>
-                <span style={{
-                  padding: '4px 8px', borderRadius: '4px', fontSize: '0.8rem', fontWeight: 'bold',
-                  background: tx.type === 'CREDIT' ? 'rgba(16, 185, 129, 0.1)' : 'rgba(239, 68, 68, 0.1)',
-                  color: tx.type === 'CREDIT' ? 'var(--success)' : 'var(--danger)'
-                }}>
-                  {tx.type}
-                </span>
-              </td>
-              <td style={{ fontWeight: 'bold', color: tx.type === 'CREDIT' ? 'var(--success)' : 'white' }}>
-                {tx.type === 'DEBIT' || tx.type === 'TRANSFER' ? '-' : '+'}${tx.amount.toFixed(2)}
-              </td>
-            </tr>
-          ))}
-          {txs.length === 0 && (
-            <tr><td colSpan="4" style={{ textAlign: 'center', opacity: 0.5 }}>No recorded transactions.</td></tr>
+    <div className="animate-fade-in" style={{ maxWidth: '600px' }}>
+      <h3 style={{ marginTop: 0, marginBottom: '24px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+        <ArrowLeftRight color="var(--primary)" /> 
+        New Transaction
+      </h3>
+
+      {accounts.length === 0 ? (
+        <div className="card" style={{ padding: '24px', textAlign: 'center', color: 'var(--muted)' }}>
+          No accounts available to transact on. Please create one.
+        </div>
+      ) : (
+        <div className="glass-card">
+          <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            
+            <div>
+              <label style={{ display: 'block', marginBottom: '8px', color: 'var(--text-muted)' }}>Select Account</label>
+              <select 
+                value={selectedAccount} 
+                onChange={e => setSelectedAccount(e.target.value)}
+                className="input-field"
+                required
+              >
+                {accounts.map(acc => (
+                  <option key={acc.accountNumber} value={acc.accountNumber}>
+                    {acc.accountNumber} - {acc.ownerName} (${acc.balance.toFixed(2)})
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label style={{ display: 'block', marginBottom: '8px', color: 'var(--text-muted)' }}>Transaction Type</label>
+              <select 
+                value={type} 
+                onChange={e => setType(e.target.value)}
+                className="input-field"
+                required
+              >
+                <option value="DEBIT">Debit (Withdrawal)</option>
+                <option value="CREDIT">Credit (Deposit)</option>
+              </select>
+            </div>
+
+            <div>
+              <label style={{ display: 'block', marginBottom: '8px', color: 'var(--text-muted)' }}>Amount (USD)</label>
+              <input 
+                type="number" 
+                min="0.01" step="0.01"
+                value={amount} 
+                onChange={e => setAmount(e.target.value)}
+                required
+                className="input-field"
+                placeholder="e.g. 150.00"
+              />
+            </div>
+            
+            <button type="submit" className="btn-primary" disabled={processing} style={{ marginTop: '8px' }}>
+              {processing ? 'Processing...' : `Execute ${type}`}
+            </button>
+          </form>
+          
+          {message && (
+            <div style={{ 
+              marginTop: '20px', padding: '16px', borderRadius: '8px',
+              background: message.includes('Error') ? 'rgba(239, 68, 68, 0.1)' : 'rgba(34, 197, 94, 0.1)',
+              color: message.includes('Error') ? 'var(--danger)' : '#4ade80'
+            }}>
+              {message}
+            </div>
           )}
-        </tbody>
-      </table>
+        </div>
+      )}
     </div>
-  )
+  );
 }

@@ -1,5 +1,5 @@
 import { Link, Outlet, useLocation } from 'react-router-dom'
-import { LayoutDashboard, ArrowLeftRight, Send, LogOut, UserPlus } from 'lucide-react'
+import { LayoutDashboard, ArrowLeftRight, UserPlus, Banknote, LogOut } from 'lucide-react'
 
 export default function DashboardLayout({ userInfo }) {
   const location = useLocation()
@@ -21,16 +21,16 @@ export default function DashboardLayout({ userInfo }) {
         
         <nav style={{ flex: 1, padding: '16px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
           <Link to="/" className={`nav-link ${location.pathname === '/' ? 'active' : ''}`}>
-            <LayoutDashboard size={20} /> Dashboard
+            <LayoutDashboard size={20} /> Accounts List
           </Link>
           <Link to="/transactions" className={`nav-link ${location.pathname === '/transactions' ? 'active' : ''}`}>
-            <ArrowLeftRight size={20} /> Transactions
-          </Link>
-          <Link to="/transfer" className={`nav-link ${location.pathname === '/transfer' ? 'active' : ''}`}>
-            <Send size={20} /> Transfer Money
+            <ArrowLeftRight size={20} /> New Transaction
           </Link>
           <Link to="/create-account" className={`nav-link ${location.pathname === '/create-account' ? 'active' : ''}`}>
             <UserPlus size={20} /> Create Account
+          </Link>
+          <Link to="/loans" className={`nav-link ${location.pathname === '/loans' ? 'active' : ''}`}>
+            <Banknote size={20} /> Loans
           </Link>
         </nav>
       </aside>

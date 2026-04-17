@@ -4,8 +4,8 @@ import Login from './pages/Login'
 import DashboardLayout from './pages/DashboardLayout'
 import Overview from './pages/views/Overview'
 import Transactions from './pages/views/Transactions'
-import Transfer from './pages/views/Transfer'
 import CreateAccount from './pages/views/CreateAccount'
+import Loans from './pages/views/Loans'
 import RestrictedModal from './components/RestrictedModal'
 
 const AUTH_URL = 'http://localhost:5000'
@@ -82,8 +82,8 @@ function App() {
         }>
           <Route index element={<Overview />} />
           <Route path="transactions" element={<Transactions />} />
-          <Route path="transfer" element={<Transfer />} />
           <Route path="create-account" element={<CreateAccount />} />
+          <Route path="loans" element={<Loans />} />
         </Route>
       </Routes>
     </>

@@ -62,7 +62,10 @@ const bootstrapSeedData = async () => {
       { name: 'CREATE_TRANSACTION', description: 'Can create transactions' },
       { name: 'READ_ACCOUNT', description: 'Can read account details' },
       { name: 'TRANSFER_MONEY', description: 'Can transfer money' },
-      { name: 'CREATE_ACCOUNT', description: 'Can create user accounts' }
+      { name: 'CREATE_ACCOUNT', description: 'Can create user accounts' },
+      { name: 'EDIT_ACCOUNT', description: 'Can edit user accounts' },
+      { name: 'DELETE_ACCOUNT', description: 'Can delete user accounts' },
+      { name: 'CREATE_LOAN_TRANSACTION', description: 'Can create loan transactions' }
     ];
 
     for (const p of permissions) {
@@ -77,19 +80,25 @@ const bootstrapSeedData = async () => {
 
     const managerRole = await Role.findOneAndUpdate(
       { name: 'manager' },
-      { $set: { permissions: ['CREATE_ACCOUNT', 'READ_ACCOUNT', 'READ_TRANSACTION', 'CREATE_TRANSACTION', 'TRANSFER_MONEY'] } },
+      { $set: { permissions: ['READ_TRANSACTION', 'CREATE_TRANSACTION', 'READ_ACCOUNT', 'TRANSFER_MONEY', 'CREATE_ACCOUNT', 'EDIT_ACCOUNT', 'DELETE_ACCOUNT', 'CREATE_LOAN_TRANSACTION'] } },
       { upsert: true, new: true }
     );
 
-    const clerkRole = await Role.findOneAndUpdate(
-      { name: 'clerk' },
-      { $set: { permissions: ['READ_ACCOUNT', 'READ_TRANSACTION', 'CREATE_TRANSACTION', 'TRANSFER_MONEY'] } },
+    const loanManagerRole = await Role.findOneAndUpdate(
+      { name: 'loan_manager' },
+      { $set: { permissions: ['READ_ACCOUNT', 'READ_TRANSACTION', 'CREATE_LOAN_TRANSACTION'] } },
+      { upsert: true, new: true }
+    );
+
+    const branchManagerRole = await Role.findOneAndUpdate(
+      { name: 'branch_manager' },
+      { $set: { permissions: ['READ_TRANSACTION', 'CREATE_TRANSACTION', 'READ_ACCOUNT', 'TRANSFER_MONEY', 'CREATE_ACCOUNT', 'EDIT_ACCOUNT', 'CREATE_LOAN_TRANSACTION'] } },
       { upsert: true, new: true }
     );
 
     const tellerRole = await Role.findOneAndUpdate(
       { name: 'teller' },
-      { $set: { permissions: ['CREATE_TRANSACTION', 'TRANSFER_MONEY'] } },
+      { $set: { permissions: ['READ_ACCOUNT', 'CREATE_TRANSACTION', 'TRANSFER_MONEY'] } },
       { upsert: true, new: true }
     );
 
@@ -115,8 +124,14 @@ const bootstrapSeedData = async () => {
     );
 
     await User.updateOne(
-      { email: 'clerk@bank.local' },
-      { $setOnInsert: { password, role: 'clerk' } },
+      { email: 'loan_manager@bank.local' },
+      { $setOnInsert: { password, role: 'loan_manager' } },
+      { upsert: true }
+    );
+
+    await User.updateOne(
+      { email: 'branch_manager@bank.local' },
+      { $setOnInsert: { password, role: 'branch_manager' } },
       { upsert: true }
     );
 

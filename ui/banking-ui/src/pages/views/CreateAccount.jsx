@@ -3,6 +3,7 @@ import { apiCall } from '../../utils/api'
 import { UserPlus } from 'lucide-react'
 
 export default function CreateAccount() {
+  const [ownerName, setOwnerName] = useState('')
   const [accountType, setAccountType] = useState('CHECKING')
   const [initialDeposit, setInitialDeposit] = useState(0)
   const [status, setStatus] = useState('')
@@ -16,11 +17,12 @@ export default function CreateAccount() {
     try {
       const res = await apiCall('/account', {
         method: 'POST',
-        body: JSON.stringify({ accountType, initialDeposit: parseFloat(initialDeposit) })
+        body: JSON.stringify({ ownerName, accountType, initialDeposit: parseFloat(initialDeposit) })
       })
       setStatus('Success!')
       setNewAccount(res.account)
       setInitialDeposit(0)
+      setOwnerName('')
     } catch (err) {
       setStatus(`Failed: ${err.message}`)
     }
@@ -35,6 +37,17 @@ export default function CreateAccount() {
       
       <div className="glass-card">
         <form onSubmit={handleCreate} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+          <div>
+            <label style={{ display: 'block', marginBottom: '8px', color: 'var(--text-muted)' }}>Owner Name</label>
+            <input 
+              type="text" 
+              value={ownerName} 
+              onChange={e => setOwnerName(e.target.value)}
+              required
+              className="input-field"
+              placeholder="e.g. John Doe"
+            />
+          </div>
           <div>
             <label style={{ display: 'block', marginBottom: '8px', color: 'var(--text-muted)' }}>Account Type</label>
             <select 
@@ -75,6 +88,7 @@ export default function CreateAccount() {
             {newAccount && (
               <div style={{ marginTop: '12px', color: 'var(--text)' }}>
                 <strong>Account Number:</strong> {newAccount.accountNumber}<br/>
+                <strong>Owner:</strong> {newAccount.ownerName}<br/>
                 <strong>Balance:</strong> ${newAccount.balance.toFixed(2)}
               </div>
             )}
