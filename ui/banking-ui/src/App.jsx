@@ -7,6 +7,7 @@ import Transactions from './pages/views/Transactions'
 import CreateAccount from './pages/views/CreateAccount'
 import Loans from './pages/views/Loans'
 import RestrictedModal from './components/RestrictedModal'
+import api from './utils/api'
 
 const AUTH_URL = 'http://localhost:5000'
 const REDIRECT_URI = 'http://localhost:5002' 
@@ -24,14 +25,10 @@ function App() {
 
       if (code) {
         try {
-          const res = await fetch(`${AUTH_URL}/api/auth/token`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ code })
-          })
-          const data = await res.json()
+          const res = await api.post(`${AUTH_URL}/api/auth/token`, { code })
+          const data = res; // response interceptor returns data directly
           
-          if (res.ok) {
+          if (data && data.accessToken) {
             localStorage.setItem('accessToken', data.accessToken)
             
             // Decode simple payload

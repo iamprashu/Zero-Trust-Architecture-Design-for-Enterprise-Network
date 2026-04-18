@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { fetchWithAxios } from '../utils/api';
 import { Plus, Edit2 } from 'lucide-react';
 
 const RolesPage = () => {
@@ -20,8 +21,8 @@ const RolesPage = () => {
     try {
       const headers = { 'Authorization': `Bearer ${token}` };
       const [rRes, pRes] = await Promise.all([
-        fetch('http://localhost:5000/api/admin/roles', { headers }),
-        fetch('http://localhost:5000/api/admin/permissions', { headers })
+        fetchWithAxios('http://localhost:5000/api/admin/roles', { headers }),
+        fetchWithAxios('http://localhost:5000/api/admin/permissions', { headers })
       ]);
       const rData = await rRes.json();
       const pData = await pRes.json();
@@ -80,7 +81,7 @@ const RolesPage = () => {
     const method = editMode ? 'PATCH' : 'POST';
 
     try {
-      const res = await fetch(url, {
+      const res = await fetchWithAxios(url, {
         method,
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
         body: JSON.stringify({ name: roleName, permissions: selectedPerms })
@@ -100,7 +101,7 @@ const RolesPage = () => {
   const handleDelete = async (roleId, roleName) => {
     if(!window.confirm(`Delete role ${roleName}?`)) return;
     try {
-      const res = await fetch(`http://localhost:5000/api/admin/roles/${roleId}`, {
+      const res = await fetchWithAxios(`http://localhost:5000/api/admin/roles/${roleId}`, {
         method: 'DELETE',
         headers: { 'Authorization': `Bearer ${token}` }
       });

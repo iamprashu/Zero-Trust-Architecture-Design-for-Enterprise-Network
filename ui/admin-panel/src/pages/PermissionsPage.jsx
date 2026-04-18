@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { fetchWithAxios } from '../utils/api';
 import { Plus } from 'lucide-react';
 
 const PermissionsPage = () => {
@@ -11,7 +12,7 @@ const PermissionsPage = () => {
 
   const fetchPermissions = async () => {
     try {
-      const res = await fetch('http://localhost:5000/api/admin/permissions', {
+      const res = await fetchWithAxios('http://localhost:5000/api/admin/permissions', {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       const data = await res.json();
@@ -26,7 +27,7 @@ const PermissionsPage = () => {
   const handleCreate = async (e) => {
     e.preventDefault();
     try {
-      const res = await fetch('http://localhost:5000/api/admin/permissions', {
+      const res = await fetchWithAxios('http://localhost:5000/api/admin/permissions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
         body: JSON.stringify({ name: newPermName, description: newPermDesc })
@@ -46,7 +47,7 @@ const PermissionsPage = () => {
   const handleDelete = async (id, name) => {
     if(!window.confirm(`Delete permission ${name}? This will cascade and remove it from all roles.`)) return;
     try {
-      const res = await fetch(`http://localhost:5000/api/admin/permissions/${id}`, {
+      const res = await fetchWithAxios(`http://localhost:5000/api/admin/permissions/${id}`, {
         method: 'DELETE',
         headers: { 'Authorization': `Bearer ${token}` }
       });

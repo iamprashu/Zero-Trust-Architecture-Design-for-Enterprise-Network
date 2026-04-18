@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { fetchWithAxios } from '../utils/api';
 import { Plus } from 'lucide-react';
 
 const UsersPage = () => {
@@ -14,15 +15,15 @@ const UsersPage = () => {
   const [newRole, setNewRole] = useState('');
 
   useEffect(() => {
-    fetchData();
+    fetchWithAxiosData();
   }, []);
 
-  const fetchData = async () => {
+  const fetchWithAxiosData = async () => {
     try {
       const headers = { 'Authorization': `Bearer ${token}` };
       const [uRes, rRes] = await Promise.all([
-        fetch('http://localhost:5000/api/admin/users', { headers }),
-        fetch('http://localhost:5000/api/admin/roles', { headers })
+        fetchWithAxios('http://localhost:5000/api/admin/users', { headers }),
+        fetchWithAxios('http://localhost:5000/api/admin/roles', { headers })
       ]);
       const uData = await uRes.json();
       const rData = await rRes.json();
@@ -40,7 +41,7 @@ const UsersPage = () => {
   const handleCreateUser = async (e) => {
     e.preventDefault();
     try {
-      const res = await fetch('http://localhost:5000/api/admin/create-user', {
+      const res = await fetchWithAxios('http://localhost:5000/api/admin/create-user', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
         body: JSON.stringify({ email: newEmail, password: newPassword, role: newRole })
@@ -49,7 +50,7 @@ const UsersPage = () => {
         setNewEmail('');
         setNewPassword('');
         setShowModal(false);
-        fetchData();
+        fetchWithAxiosData();
       } else {
         const error = await res.json();
         alert(error.error || 'Failed to create user');
@@ -61,13 +62,13 @@ const UsersPage = () => {
 
   const handleRoleChange = async (userId, newRoleVal) => {
     try {
-      const res = await fetch(`http://localhost:5000/api/admin/users/${userId}/role`, {
+      const res = await fetchWithAxios(`http://localhost:5000/api/admin/users/${userId}/role`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
         body: JSON.stringify({ role: newRoleVal })
       });
       if (res.ok) {
-        fetchData(); // Refresh
+        fetchWithAxiosData(); // Refresh
       } else {
         const error = await res.json();
         alert(error.error || 'Failed to update role');
@@ -79,12 +80,12 @@ const UsersPage = () => {
 
   const toggleStatus = async (userId, currentStatus, type) => {
     try {
-      const res = await fetch(`http://localhost:5000/api/admin/users/disable`, {
+      const res = await fetchWithAxios(`http://localhost:5000/api/admin/users/disable`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
         body: JSON.stringify({ userId, disabled: !currentStatus })
       });
-      if (res.ok) fetchData();
+      if (res.ok) fetchWithAxiosData();
     } catch (err) {
       console.error(err);
     }
@@ -92,12 +93,12 @@ const UsersPage = () => {
   
   const resetRisk = async (userId) => {
     try {
-      const res = await fetch(`http://localhost:5000/api/admin/users/risk`, {
+      const res = await fetchWithAxios(`http://localhost:5000/api/admin/users/risk`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
         body: JSON.stringify({ userId, riskScore: 0 })
       });
-      if (res.ok) fetchData();
+      if (res.ok) fetchWithAxiosData();
     } catch (e) {}
   };
 

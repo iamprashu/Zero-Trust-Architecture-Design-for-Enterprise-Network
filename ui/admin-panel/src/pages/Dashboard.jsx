@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { fetchWithAxios } from '../utils/api';
 import { Users, Shield, ScrollText } from 'lucide-react';
 
 const Dashboard = () => {
@@ -11,9 +12,9 @@ const Dashboard = () => {
       try {
         const headers = { 'Authorization': `Bearer ${token}` };
         const [usersRes, rolesRes, logsRes] = await Promise.all([
-          fetch('http://localhost:5000/api/admin/users', { headers }),
-          fetch('http://localhost:5000/api/admin/roles', { headers }),
-          fetch('http://localhost:5000/api/admin/audit-logs', { headers })
+          fetchWithAxios('http://localhost:5000/api/admin/users', { headers }),
+          fetchWithAxios('http://localhost:5000/api/admin/roles', { headers }),
+          fetchWithAxios('http://localhost:5000/api/admin/audit-logs', { headers })
         ]);
         
         const users = await usersRes.json();

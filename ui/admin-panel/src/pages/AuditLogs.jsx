@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { fetchWithAxios } from '../utils/api';
 
 const AuditLogs = () => {
   const { token } = useAuth();
@@ -8,7 +9,7 @@ const AuditLogs = () => {
   useEffect(() => {
     const fetchLogs = async () => {
       try {
-        const res = await fetch('http://localhost:5000/api/admin/audit-logs', {
+        const res = await fetchWithAxios('http://localhost:5000/api/admin/audit-logs', {
           headers: { 'Authorization': `Bearer ${token}` }
         });
         const data = await res.json();

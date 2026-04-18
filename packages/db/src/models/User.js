@@ -31,6 +31,10 @@ const userSchema = new mongoose.Schema({
   deleted: {
     type: Boolean,
     default: false
+  },
+  refreshToken: {
+    type: String,
+    default: null
   }
 }, {
   timestamps: true
