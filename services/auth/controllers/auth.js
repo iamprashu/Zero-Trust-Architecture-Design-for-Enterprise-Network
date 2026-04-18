@@ -2,6 +2,7 @@ const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const { User, AuditLog, Role, Permission, AuthCode, RefreshToken } = require("@repo/db");
 const crypto = require("crypto");
+const { encrypt, decrypt } = require("../utils/encryption");
 // JWT Secrets should come from environment variables in production
 const getJwtSecret = () => process.env.JWT_SECRET || "default_secret";
 const getRefreshSecret = () =>
@@ -40,6 +41,9 @@ exports.login = async (req, res) => {
     const refreshToken = jwt.sign({ userId: user._id }, getRefreshSecret(), {
       expiresIn: "7d",
     });
+
+    user.refreshToken = encrypt(refreshToken);
+    await user.save();
 
     // Save audit log
     await AuditLog.create({
@@ -200,7 +204,7 @@ exports.renderLogin = (req, res) => {
   if (!redirect_uri) {
     return res.status(400).send("Missing redirect_uri");
   }
-  
+
   const html = `
     <!DOCTYPE html>
     <html lang="en">
@@ -237,7 +241,7 @@ exports.renderLogin = (req, res) => {
 exports.authorize = async (req, res) => {
   try {
     const { email, password, redirect_uri } = req.body;
-    
+
     if (!email || !password || !redirect_uri) {
       return res.status(400).json({ error: "Email, password, and redirect_uri are required" });
     }
@@ -302,15 +306,12 @@ exports.token = async (req, res) => {
       { expiresIn: "15m" }
     );
 
-    const refreshTokenPlain = crypto.randomBytes(32).toString('hex');
-    const salt = await bcrypt.genSalt(10);
-    const refreshTokenHash = await bcrypt.hash(refreshTokenPlain, salt);
-
-    await RefreshToken.create({
-      tokenHash: refreshTokenHash,
-      userId: user._id,
-      expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) // 7 days
+    const refreshTokenPlain = jwt.sign({ userId: user._id }, getRefreshSecret(), {
+      expiresIn: "7d",
     });
+
+    user.refreshToken = encrypt(refreshTokenPlain);
+    await user.save();
 
     // Set Refresh token in HttpOnly cookie
     res.cookie("refreshToken", refreshTokenPlain, {
@@ -333,10 +334,91 @@ exports.token = async (req, res) => {
   }
 };
 
+exports.refresh = async (req, res) => {
+  try {
+    const refreshToken = req.cookies.refreshToken;
+    console.log("Refresh Done refresh token was:", refreshToken);
+    if (!refreshToken) {
+      return res.status(401).json({ error: "Refresh token required" });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(refreshToken, getRefreshSecret());
+    } catch (err) {
+      return res.status(401).json({ error: "Invalid or expired refresh token please login again" });
+    }
+
+    const user = await User.findById(decoded.userId);
+    if (!user || user.isBlocked || user.disabled || user.deleted) {
+      return res.status(401).json({ error: "User invalid or blocked" });
+    }
+
+    if (!user.refreshToken) {
+      return res.status(401).json({ error: "No refresh token found for user" });
+    }
+
+    const decryptedToken = decrypt(user.refreshToken);
+    if (decryptedToken !== refreshToken) {
+      // Token mismatch could imply a re-use of an old token or theft
+      user.refreshToken = null;
+      await user.save();
+      return res.status(401).json({ error: "Refresh token mismatch. Access revoked." });
+    }
+
+    const accessToken = jwt.sign(
+      { userId: user._id, role: user.role },
+      getJwtSecret(),
+      { expiresIn: "15m" }
+    );
+
+    console.log("Refresh Done new access token is :", accessToken);
+
+    // Keep original expiration time using the old token's exp claim
+    const newRefreshToken = jwt.sign(
+      { userId: user._id, exp: decoded.exp },
+      getRefreshSecret()
+    );
+
+    console.log("Refresh Done new refresh token is :", newRefreshToken);
+
+    user.refreshToken = encrypt(newRefreshToken);
+    await user.save();
+
+
+    res.cookie("accessToken", accessToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      maxAge: 15 * 60 * 1000,
+    });
+
+    res.cookie("refreshToken", newRefreshToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      // the cookie should last until the remaining days, but maxAge handles it mostly well.
+      // We will set to 7 days, but token exp controls exact second.
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+      sameSite: "lax",
+      path: "/"
+    });
+
+    return res.json({
+      message: "Token refreshed successfully",
+      accessToken,
+      token_type: "Bearer",
+      expires_in: 900
+    });
+
+  } catch (error) {
+    console.error("Refresh error:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+};
+
 exports.verify = async (req, res) => {
   try {
     const { token, requiredPermissions } = req.body;
-    
+
     if (!token) {
       return res.status(400).json({ authorized: false, error: "Token is required" });
     }
@@ -344,7 +426,7 @@ exports.verify = async (req, res) => {
     let decoded;
     try {
       decoded = jwt.verify(token, getJwtSecret());
-    } catch(err) {
+    } catch (err) {
       return res.status(401).json({ authorized: false, error: "Invalid or expired token" });
     }
 
@@ -373,7 +455,7 @@ exports.verify = async (req, res) => {
 
     if (requiredPermissions && Array.isArray(requiredPermissions) && requiredPermissions.length > 0) {
       const hasAccess = requiredPermissions.every(rp => userPerms.includes(rp));
-      
+
       if (!hasAccess) {
         user.riskScore += 10;
         if (user.riskScore > 90) {
@@ -395,7 +477,7 @@ exports.verify = async (req, res) => {
       user: { userId: user._id, role: user.role }
     });
 
-  } catch(error) {
+  } catch (error) {
     console.error("Centralized Verify error:", error);
     res.status(500).json({ authorized: false, error: "Internal server error" });
   }

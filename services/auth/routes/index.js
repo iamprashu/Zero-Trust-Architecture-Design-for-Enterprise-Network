@@ -14,6 +14,7 @@ router.post('/auth/authorize', authController.authorize);
 router.post('/auth/token', authController.token);
 router.post('/auth/verify', authController.verify);
 router.post('/auth/verify-access', authController.verifyAccess);
+router.post('/auth/refresh', authController.refresh);
 router.post('/auth/logout', verifyJwt, authController.logout);
 
 // ----------------------
