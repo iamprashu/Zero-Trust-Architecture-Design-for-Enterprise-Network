@@ -6,6 +6,8 @@ const AuditLog = require('./models/AuditLog');
 const ApiMapping = require('./models/ApiMapping');
 const AuthCode = require('./models/AuthCode');
 const RefreshToken = require('./models/RefreshToken');
+const Account = require('./models/Account');
+const Transaction = require('./models/Transaction');
 
 module.exports = {
   connectDB,
@@ -15,5 +17,7 @@ module.exports = {
   AuditLog,
   ApiMapping,
   AuthCode,
-  RefreshToken
+  RefreshToken,
+  Account,
+  Transaction,
 };
