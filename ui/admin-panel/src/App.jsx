@@ -3,12 +3,15 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { useAuth } from './context/AuthContext';
 
 import AdminLayout from './layouts/AdminLayout';
+import DeviceOtpModal from './components/DeviceOtpModal';
+
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
 import UsersPage from './pages/UsersPage';
 import RolesPage from './pages/RolesPage';
 import PermissionsPage from './pages/PermissionsPage';
 import AuditLogs from './pages/AuditLogs';
+import DevicesPage from './pages/DevicesPage';
 
 const ProtectedRoute = ({ children }) => {
   const { token, user } = useAuth();
@@ -24,7 +27,9 @@ const ProtectedRoute = ({ children }) => {
 
 function App() {
   return (
-    <BrowserRouter>
+    <>
+      <DeviceOtpModal />
+      <BrowserRouter>
       <Routes>
         <Route path="/login" element={<Login />} />
         
@@ -38,10 +43,12 @@ function App() {
           <Route path="users" element={<UsersPage />} />
           <Route path="roles" element={<RolesPage />} />
           <Route path="permissions" element={<PermissionsPage />} />
+          <Route path="devices" element={<DevicesPage />} />
           <Route path="logs" element={<AuditLogs />} />
         </Route>
       </Routes>
     </BrowserRouter>
+    </>
   );
 }
 

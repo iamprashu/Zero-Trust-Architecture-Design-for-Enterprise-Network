@@ -22,33 +22,36 @@ app.get("/health", (req, res) => {
 app.use(
   "/auth",
   createProxyMiddleware({
-    target: "http://localhost:3001",
+    target: process.env.AUTH_SERVICE_URL || "http://localhost:5000",
     changeOrigin: true,
-    pathRewrite: {
-      "^/auth": "",
-    },
+    pathRewrite: { "^/auth": "" },
   }),
 );
 
 app.use(
   "/users",
   createProxyMiddleware({
-    target: "http://localhost:3002",
+    target: process.env.USER_SERVICE_URL || "http://localhost:3002",
     changeOrigin: true,
-    pathRewrite: {
-      "^/users": "",
-    },
+    pathRewrite: { "^/users": "" },
   }),
 );
 
 app.use(
   "/authz",
   createProxyMiddleware({
-    target: "http://localhost:3004",
+    target: process.env.AUTHZ_SERVICE_URL || "http://localhost:3004",
     changeOrigin: true,
-    pathRewrite: {
-      "^/authz": "",
-    },
+    pathRewrite: { "^/authz": "" },
+  }),
+);
+
+app.use(
+  "/devices",
+  createProxyMiddleware({
+    target: process.env.DEVICE_SERVICE_URL || "http://localhost:3005",
+    changeOrigin: true,
+    pathRewrite: { "^/devices": "" },
   }),
 );
 

@@ -1,8 +1,41 @@
 import axios from 'axios';
+import fpPromise from '@fingerprintjs/fingerprintjs';
+
+let fpPromiseCache = fpPromise.load();
+let deviceId = localStorage.getItem('deviceId');
+
+const AUTH_BASE = import.meta.env.VITE_AUTH_URL || 'http://localhost:5000';
 
 const api = axios.create({
-  baseURL: 'http://localhost:5000/api',
+  baseURL: `${AUTH_BASE}/api`,
   withCredentials: true, // important for cookies
+});
+
+// Request Interceptor to add Device ID
+api.interceptors.request.use(async (config) => {
+  let storedDeviceId = localStorage.getItem('deviceId') || deviceId;
+  
+  if (!storedDeviceId) {
+    try {
+      const fp = await fpPromiseCache;
+      const result = await fp.get();
+      storedDeviceId = result.visitorId;
+      deviceId = storedDeviceId;
+      localStorage.setItem('deviceId', storedDeviceId);
+    } catch (e) {
+      console.error("Fingerprint error", e);
+    }
+  }
+
+  if (storedDeviceId) {
+    config.headers['X-Device-Id'] = storedDeviceId;
+  }
+  
+  const token = localStorage.getItem('adminToken');
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
 });
 
 // Response Interceptor
@@ -24,16 +57,30 @@ api.interceptors.response.use(
       originalRequest._retry = true;
       try {
         // Automatically attempt to refresh the token using the HttpOnly cookie
-        await axios.post('http://localhost:5000/api/auth/refresh', {}, { withCredentials: true });
+        await axios.post(`${AUTH_BASE}/api/auth/refresh`, {}, { withCredentials: true });
         
         // Retry the original failed request
         return api(originalRequest);
       } catch (refreshError) {
         // If refresh fails too, they must re-login
-        localStorage.removeItem('token');
+        localStorage.removeItem('adminToken');
         localStorage.removeItem('user');
         window.location.href = '/login';
         return Promise.reject(refreshError);
+      }
+    }
+    
+    // Handle Device Errors
+    if (error.response && error.response.status === 403) {
+      if (error.response.data.code === 'DEVICE_UNRECOGNIZED' || error.response.data.code === 'DEVICE_EXPIRED') {
+        // Dispatch custom event for App.jsx to pick up
+        window.dispatchEvent(new CustomEvent('device_unrecognized', { 
+          detail: { 
+            isFirstLogin: error.response.data.isFirstLogin,
+            code: error.response.data.code
+          } 
+        }));
+        // We reject the promise, the UI will wait for OTP verification
       }
     }
 

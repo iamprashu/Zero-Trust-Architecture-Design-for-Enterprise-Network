@@ -7,10 +7,11 @@ import Transactions from './pages/views/Transactions'
 import CreateAccount from './pages/views/CreateAccount'
 import Loans from './pages/views/Loans'
 import RestrictedModal from './components/RestrictedModal'
+import DeviceOtpModal from './components/DeviceOtpModal'
 import api from './utils/api'
 
-const AUTH_URL = 'http://localhost:5000'
-const REDIRECT_URI = 'http://localhost:5002' 
+const AUTH_URL = import.meta.env.VITE_AUTH_URL || 'http://localhost:5000'
+const REDIRECT_URI = import.meta.env.VITE_REDIRECT_URI || 'http://localhost:5002'
 
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false)
@@ -69,6 +70,7 @@ function App() {
   return (
     <>
       <RestrictedModal />
+      <DeviceOtpModal />
       <Routes>
         <Route path="/login" element={
           isAuthenticated ? <Navigate to="/" /> : <Login />

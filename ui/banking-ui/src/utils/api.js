@@ -1,7 +1,11 @@
 import axios from 'axios';
+import fpPromise from '@fingerprintjs/fingerprintjs';
 
-const BANKING_URL = 'http://localhost:5001/api';
-const AUTH_URL = 'http://localhost:5000/api';
+let fpPromiseCache = fpPromise.load();
+let deviceId = localStorage.getItem('deviceId');
+
+const BANKING_URL = `${import.meta.env.VITE_BANKING_URL || 'http://localhost:5001'}/api`;
+const AUTH_URL = `${import.meta.env.VITE_AUTH_URL || 'http://localhost:5000'}/api`;
 
 const api = axios.create({
   baseURL: BANKING_URL,
@@ -14,10 +18,27 @@ const api = axios.create({
 // ── Request Interceptor ─────────────────────────────────────────────────────
 // Attach accessToken from localStorage as Authorization header before every request
 api.interceptors.request.use(
-  (config) => {
+  async (config) => {
     const token = localStorage.getItem('accessToken');
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
+    }
+    let storedDeviceId = localStorage.getItem('deviceId') || deviceId;
+    
+    if (!storedDeviceId) {
+      try {
+        const fp = await fpPromiseCache;
+        const result = await fp.get();
+        storedDeviceId = result.visitorId;
+        deviceId = storedDeviceId;
+        localStorage.setItem('deviceId', storedDeviceId);
+      } catch (e) {
+        console.error("Fingerprint error", e);
+      }
+    }
+
+    if (storedDeviceId) {
+      config.headers['X-Device-Id'] = storedDeviceId;
     }
     return config;
   },
@@ -59,10 +80,20 @@ api.interceptors.response.use(
     }
 
     if (error.response?.status === 403) {
-      const event = new CustomEvent('restricted-access', {
-        detail: error.response.data?.error || 'Unauthorized access'
-      });
-      window.dispatchEvent(event);
+      if (error.response.data?.code === 'DEVICE_UNRECOGNIZED' || error.response.data?.code === 'DEVICE_EXPIRED') {
+        const event = new CustomEvent('device_unrecognized', {
+          detail: { 
+            isFirstLogin: error.response.data?.isFirstLogin,
+            code: error.response.data?.code
+          }
+        });
+        window.dispatchEvent(event);
+      } else {
+        const event = new CustomEvent('restricted-access', {
+          detail: error.response.data?.error || 'Unauthorized access'
+        });
+        window.dispatchEvent(event);
+      }
     }
 
     throw new Error(error.response?.data?.error || 'API Error');

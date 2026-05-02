@@ -8,6 +8,8 @@ const AuthCode = require('./models/AuthCode');
 const RefreshToken = require('./models/RefreshToken');
 const Account = require('./models/Account');
 const Transaction = require('./models/Transaction');
+const Device = require('./models/Device');
+const DeviceOtp = require('./models/DeviceOtp');
 
 module.exports = {
   connectDB,
@@ -20,4 +22,6 @@ module.exports = {
   RefreshToken,
   Account,
   Transaction,
+  Device,
+  DeviceOtp,
 };

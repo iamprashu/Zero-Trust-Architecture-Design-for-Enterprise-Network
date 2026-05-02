@@ -12,14 +12,20 @@
   "license": "ISC",
   "packageManager": "pnpm@10.32.1",
   "devDependencies": {
+    "@types/cors": "^2.8.17",
     "@types/dotenv": "^8.2.3",
     "@types/express": "^5.0.6",
     "@types/morgan": "^1.9.10",
     "@types/node": "^25.5.0",
+    "@types/nodemailer": "^6.4.14",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3"
   },
   "dependencies": {
-    "dotenv": "^17.3.1"
+    "@repo/db": "workspace:*",
+    "cors": "^2.8.5",
+    "dotenv": "^17.3.1",
+    "express": "^4.19.2",
+    "nodemailer": "^6.9.13"
   }
 }

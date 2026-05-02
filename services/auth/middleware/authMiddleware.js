@@ -1,10 +1,10 @@
 const jwt = require('jsonwebtoken');
-const { User, Role, ApiMapping } = require('@repo/db');
+const { User, Role, ApiMapping, Device } = require('@repo/db');
 
 const getJwtSecret = () => process.env.JWT_SECRET || 'default_secret';
 
 // Verify JWT token in the Authorization header or cookies
-exports.verifyJwt = (req, res, next) => {
+exports.verifyJwt = async (req, res, next) => {
   try {
     let token;
     let decoded;
@@ -33,6 +33,37 @@ exports.verifyJwt = (req, res, next) => {
 
     // Attach decoded user info to request
     req.user = decoded;
+
+    // --- ZERO-TRUST DEVICE VERIFICATION ---
+    // Bypass for superadmin
+    if (decoded.role !== 'superadmin') {
+      const deviceId = req.headers['x-device-id'];
+      
+      // Some routes like login/refresh might bypass device check initially if handled specially,
+      // but the requirement is that EVERY request checks device ID.
+      if (deviceId) {
+        // 1. Clean up expired devices for this user
+        await Device.deleteMany({ userId: decoded.userId, expiresAt: { $lt: new Date() } });
+
+        // 2. Check if device exists
+        const device = await Device.findOne({ userId: decoded.userId, deviceId });
+
+        if (!device) {
+          const existingDevices = await Device.countDocuments({ userId: decoded.userId });
+          if (existingDevices === 0) {
+            return res.status(403).json({ error: 'Device unrecognized', code: 'DEVICE_UNRECOGNIZED', isFirstLogin: true });
+          }
+          return res.status(403).json({ error: 'Device unrecognized', code: 'DEVICE_UNRECOGNIZED' });
+        }
+
+        // It exists. Is it expired?
+        if (device.expiresAt && device.expiresAt < new Date()) {
+          return res.status(403).json({ error: 'Device expired', code: 'DEVICE_EXPIRED' });
+        }
+      }
+    }
+    // --- END ZERO-TRUST DEVICE VERIFICATION ---
+
     next();
   } catch (error) {
     console.error('JWT Verification Error:', error.message);

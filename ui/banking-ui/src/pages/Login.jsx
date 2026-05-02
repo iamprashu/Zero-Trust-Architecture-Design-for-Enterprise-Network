@@ -1,11 +1,12 @@
 import { Shield } from 'lucide-react'
 
-const AUTH_URL = 'http://localhost:5000'
-const REDIRECT_URI = 'http://localhost:5002'
+const AUTH_URL = import.meta.env.VITE_AUTH_URL || 'http://localhost:5000'
+const REDIRECT_URI = import.meta.env.VITE_REDIRECT_URI || 'http://localhost:5002'
 
 export default function Login() {
   const handleLogin = () => {
-    window.location.href = `${AUTH_URL}/api/login?redirect_uri=${encodeURIComponent(REDIRECT_URI)}`
+    const deviceId = localStorage.getItem('deviceId') || '';
+    window.location.href = `${AUTH_URL}/api/login?redirect_uri=${encodeURIComponent(REDIRECT_URI)}&device_id=${encodeURIComponent(deviceId)}`
   }
 
   return (

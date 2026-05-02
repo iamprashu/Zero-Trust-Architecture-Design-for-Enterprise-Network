@@ -1,6 +1,6 @@
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
-const { User, AuditLog, Role, Permission, AuthCode, RefreshToken } = require("@repo/db");
+const { User, AuditLog, Role, Permission, AuthCode, RefreshToken, Device } = require("@repo/db");
 const crypto = require("crypto");
 const { encrypt, decrypt } = require("../utils/encryption");
 // JWT Secrets should come from environment variables in production
@@ -205,6 +205,10 @@ exports.renderLogin = (req, res) => {
     return res.status(400).send("Missing redirect_uri");
   }
 
+  // If the banking UI already has a deviceId in localStorage it passes it via device_id.
+  // We use it directly so the same ID is verified, instead of generating a different one via CDN.
+  const preloadedDeviceId = (req.query.device_id || '').replace(/[^a-zA-Z0-9_-]/g, '');
+
   const html = `
     <!DOCTYPE html>
     <html lang="en">
@@ -218,18 +222,41 @@ exports.renderLogin = (req, res) => {
         input { width: 100%; padding: 0.75rem; margin: 0.5rem 0 1rem; box-sizing: border-box; border-radius: 4px; border: 1px solid #334155; background: #0f172a; color: white; }
         button { width: 100%; padding: 0.75rem; background: #3b82f6; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; }
         button:hover { background: #2563eb; }
+        button:disabled { background: #64748b; cursor: not-allowed; }
       </style>
+      <script>
+        const preloadedDeviceId = '${preloadedDeviceId}';
+
+        function enableForm(deviceId) {
+          document.getElementById('deviceIdInput').value = deviceId;
+          localStorage.setItem('deviceId', deviceId);
+          document.getElementById('submitBtn').disabled = false;
+          document.getElementById('submitBtn').innerText = 'Sign In';
+        }
+
+        // Use the ID passed from banking UI localStorage (most cases).
+        // For brand-new users with no stored ID, generate a UUID using the
+        // browser built-in crypto API — no external CDN needed.
+        const knownId = preloadedDeviceId || localStorage.getItem('deviceId');
+        if (knownId) {
+          document.addEventListener('DOMContentLoaded', () => enableForm(knownId));
+        } else {
+          const newId = crypto.randomUUID();
+          document.addEventListener('DOMContentLoaded', () => enableForm(newId));
+        }
+      </script>
     </head>
     <body>
       <div class="card">
         <h2>Secure Login</h2>
         <form action="/api/auth/authorize" method="POST">
           <input type="hidden" name="redirect_uri" value="${redirect_uri}" />
+          <input type="hidden" name="deviceId" id="deviceIdInput" value="" />
           <div style="text-align: left;"><label>Email</label></div>
           <input type="email" name="email" required />
           <div style="text-align: left;"><label>Password</label></div>
           <input type="password" name="password" required />
-          <button type="submit">Sign In</button>
+          <button type="submit" id="submitBtn" disabled>Loading Security...</button>
         </form>
       </div>
     </body>
@@ -240,7 +267,7 @@ exports.renderLogin = (req, res) => {
 
 exports.authorize = async (req, res) => {
   try {
-    const { email, password, redirect_uri } = req.body;
+    const { email, password, redirect_uri, deviceId } = req.body;
 
     if (!email || !password || !redirect_uri) {
       return res.status(400).json({ error: "Email, password, and redirect_uri are required" });
@@ -254,6 +281,70 @@ exports.authorize = async (req, res) => {
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) {
       return res.status(401).json({ error: "Invalid credentials" });
+    }
+
+    if (user.role !== 'superadmin') {
+      if (!deviceId) {
+        return res.status(403).send("Device ID missing. Please enable javascript or try again.");
+      }
+      
+      const Device = require('@repo/db').Device;
+      const device = await Device.findOne({ userId: user._id, deviceId });
+
+      let requireOtp = false;
+      if (!device) {
+        requireOtp = true;
+      } else if (device.expiresAt && device.expiresAt < new Date()) {
+        requireOtp = true;
+      }
+
+      if (requireOtp) {
+        // Automatically request OTP via Axios to device-service
+        const axios = require('axios');
+        try {
+          await axios.post(`${process.env.DEVICE_SERVICE_URL || 'http://localhost:3005'}/api/devices/otp/request`, {
+            userId: user._id,
+            deviceId,
+            deviceName: req.headers['user-agent']
+          });
+        } catch (e) {
+          console.error("Failed to request OTP during login", e.message);
+          return res.status(500).send("Failed to send OTP. Please try again later.");
+        }
+
+        const otpHtml = `
+          <!DOCTYPE html>
+          <html lang="en">
+          <head>
+            <meta charset="UTF-8">
+            <title>Verify Device - Auth Service</title>
+            <style>
+              body { font-family: 'Inter', sans-serif; background: #0f172a; color: white; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
+              .card { background: #1e293b; padding: 2rem; border-radius: 8px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); width: 100%; max-width: 400px; text-align: center; }
+              h2 { margin-top: 0; text-align: center; }
+              p { color: #94a3b8; margin-bottom: 1.5rem; }
+              input { width: 100%; padding: 0.75rem; margin: 0.5rem 0 1rem; box-sizing: border-box; border-radius: 4px; border: 1px solid #334155; background: #0f172a; color: white; text-align: center; font-size: 1.5rem; letter-spacing: 0.5rem; }
+              button { width: 100%; padding: 0.75rem; background: #10b981; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; }
+              button:hover { background: #059669; }
+            </style>
+          </head>
+          <body>
+            <div class="card">
+              <h2>Verify Device</h2>
+              <p>We've sent a 6-digit OTP to your email. Please enter it below to verify this device.</p>
+              <form action="/api/auth/authorize-otp" method="POST">
+                <input type="hidden" name="redirect_uri" value="${redirect_uri}" />
+                <input type="hidden" name="deviceId" value="${deviceId}" />
+                <input type="hidden" name="userId" value="${user._id}" />
+                <input type="text" name="otp" required maxlength="6" placeholder="000000" autocomplete="off" />
+                <button type="submit">Verify OTP</button>
+              </form>
+            </div>
+          </body>
+          </html>
+        `;
+        return res.send(otpHtml);
+      }
     }
 
     // Generate Auth Code
@@ -276,6 +367,48 @@ exports.authorize = async (req, res) => {
   } catch (error) {
     console.error("Authorize error:", error);
     res.status(500).json({ error: "Internal server error" });
+  }
+};
+
+exports.authorizeOtp = async (req, res) => {
+  try {
+    const { userId, deviceId, otp, redirect_uri } = req.body;
+    if (!userId || !deviceId || !otp || !redirect_uri) {
+      return res.status(400).send("Missing parameters for OTP verification.");
+    }
+
+    const axios = require('axios');
+    try {
+      await axios.post(`${process.env.DEVICE_SERVICE_URL || 'http://localhost:3005'}/api/devices/otp/verify`, {
+        userId, deviceId, otp
+      });
+    } catch (e) {
+      return res.status(401).send("Invalid or expired OTP. <a href='javascript:history.back()'>Go back</a>");
+    }
+
+    // Device verified, generate auth code
+    const crypto = require('crypto');
+    const code = crypto.randomBytes(16).toString('hex');
+    const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
+
+    const AuthCode = require('@repo/db').AuthCode;
+    await AuthCode.create({
+      code,
+      userId,
+      redirectUri: redirect_uri,
+      expiresAt
+    });
+
+    const AuditLog = require('@repo/db').AuditLog;
+    await AuditLog.create({
+      userId,
+      action: "oauth_authorize",
+    });
+
+    return res.redirect(`${redirect_uri}?code=${code}`);
+  } catch (error) {
+    console.error("Authorize OTP error:", error);
+    res.status(500).send("Internal server error");
   }
 };
 
@@ -445,6 +578,34 @@ exports.verify = async (req, res) => {
         user: { userId: user._id, role: user.role }
       });
     }
+
+    // --- ZERO-TRUST DEVICE VERIFICATION ---
+    const { deviceId } = req.body;
+    
+    if (!deviceId) {
+      return res.status(403).json({ authorized: false, error: 'Device ID required', code: 'DEVICE_UNRECOGNIZED' });
+    }
+
+    // 1. Clean up expired devices for this user
+    await Device.deleteMany({ userId: decoded.userId, expiresAt: { $lt: new Date() } });
+
+    // 2. Check if device exists
+    const device = await Device.findOne({ userId: decoded.userId, deviceId });
+
+    if (!device) {
+      const existingDevices = await Device.countDocuments({ userId: decoded.userId });
+      if (existingDevices === 0) {
+        return res.status(403).json({ authorized: false, error: 'Device unrecognized', code: 'DEVICE_UNRECOGNIZED', isFirstLogin: true });
+      }
+      return res.status(403).json({ authorized: false, error: 'Device unrecognized', code: 'DEVICE_UNRECOGNIZED' });
+    }
+
+    // It exists. Is it expired?
+    if (device.expiresAt && device.expiresAt < new Date()) {
+      return res.status(403).json({ authorized: false, error: 'Device expired', code: 'DEVICE_EXPIRED' });
+    }
+    // --- END ZERO-TRUST DEVICE VERIFICATION ---
+
 
     const roleData = await Role.findOne({ name: user.role });
     const userPerms = roleData ? roleData.permissions : [];

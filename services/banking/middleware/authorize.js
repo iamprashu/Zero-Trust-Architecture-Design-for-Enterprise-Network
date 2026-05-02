@@ -9,18 +9,19 @@ exports.authorize = (requiredPermissions = []) => {
       }
 
       const token = authHeader.split(' ')[1];
+      const deviceId = req.headers['x-device-id'];
 
       // Call Centralized Auth Service
       const response = await fetch(authVerificationUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token, requiredPermissions })
+        body: JSON.stringify({ token, requiredPermissions, deviceId })
       });
 
       const data = await response.json();
 
       if (!response.ok || !data.authorized) {
-        return res.status(v(response.status, 403)).json({ error: data.error || 'Unauthorized' });
+        return res.status(v(response.status, 403)).json({ error: data.error || 'Unauthorized', code: data.code, isFirstLogin: data.isFirstLogin });
       }
 
       // Populate req.user just in case it is needed by downstream handlers

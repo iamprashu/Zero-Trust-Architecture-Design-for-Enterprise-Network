@@ -1,6 +1,6 @@
 import React from 'react';
 import { NavLink } from 'react-router-dom';
-import { LayoutDashboard, Users, Shield, Key, ScrollText } from 'lucide-react';
+import { LayoutDashboard, Users, Shield, Key, ScrollText, MonitorSmartphone } from 'lucide-react';
 
 const Sidebar = () => {
   const navItems = [
@@ -8,6 +8,7 @@ const Sidebar = () => {
     { name: 'Users', path: '/users', icon: <Users size={20} /> },
     { name: 'Roles', path: '/roles', icon: <Shield size={20} /> },
     { name: 'Permissions', path: '/permissions', icon: <Key size={20} /> },
+    { name: 'Devices', path: '/devices', icon: <MonitorSmartphone size={20} /> },
     { name: 'Audit Logs', path: '/logs', icon: <ScrollText size={20} /> },
   ];
 

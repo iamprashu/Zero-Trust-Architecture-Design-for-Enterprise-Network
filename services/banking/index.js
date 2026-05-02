@@ -5,11 +5,12 @@ const { connectDB, Account, Transaction } = require("@repo/db");
 const { authorize } = require("./middleware/authorize");
 
 const app = express();
+const corsOrigins = (process.env.CORS_ORIGINS || 'http://localhost:5173,http://localhost:5002').split(',');
 const corsOptions = {
-  origin: ["http://localhost:5173", "http://localhost:5002"], // Only allow this domain
-  allowedHeaders: ["Content-Type", "Authorization"], // Restrict headers
-  credentials: true, // Allow cookies/auth headers
-  optionsSuccessStatus: 200, // Legacy browser support
+  origin: corsOrigins,
+  allowedHeaders: ["Content-Type", "Authorization", "x-device-id"],
+  credentials: true,
+  optionsSuccessStatus: 200,
 };
 
 app.use(cors(corsOptions));
