@@ -11,6 +11,9 @@ const adminController = require('../controllers/admin');
 router.get('/login', authController.renderLogin);
 router.post('/auth/login', authController.login); // kept for legacy
 router.post('/auth/authorize', authController.authorize);
+router.post('/auth/setup-authenticator', authController.setupAuthenticator);
+router.post('/auth/verify-device-totp', authController.verifyDeviceTotp);
+router.post('/auth/fallback-otp', authController.fallbackOtp);
 router.post('/auth/authorize-otp', authController.authorizeOtp);
 router.post('/auth/token', authController.token);
 router.post('/auth/verify', authController.verify);

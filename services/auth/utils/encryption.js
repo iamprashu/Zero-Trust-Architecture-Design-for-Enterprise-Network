@@ -1,7 +1,6 @@
 const crypto = require('crypto');
 
-// In production, this should come from environment variable
-// Using a 32 byte digest of a default secret to ensure it's always exactly length 32 for AES-256
+
 const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY 
   ? crypto.createHash('sha256').update(process.env.ENCRYPTION_KEY).digest()
   : crypto.createHash('sha256').update('default_encryption_key_please_change_in_production').digest();

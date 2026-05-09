@@ -2,6 +2,8 @@ const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const { User, AuditLog, Role, Permission, AuthCode, RefreshToken, Device } = require("@repo/db");
 const crypto = require("crypto");
+const qrcode = require("qrcode");
+const { authenticator } = require("otplib");
 const { encrypt, decrypt } = require("../utils/encryption");
 // JWT Secrets should come from environment variables in production
 const getJwtSecret = () => process.env.JWT_SECRET || "default_secret";
@@ -199,15 +201,39 @@ exports.logout = async (req, res) => {
 };
 
 // OAuth2 Style Flow functions
+
+const renderError = (res, message) => {
+  res.send(`
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+      <meta charset="UTF-8">
+      <title>Error - Auth Service</title>
+      <style>
+        body { font-family: 'Inter', sans-serif; background: #0f172a; color: white; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
+        .card { background: #1e293b; padding: 2rem; border-radius: 8px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); width: 100%; max-width: 400px; text-align: center; border-top: 4px solid #ef4444; }
+        h2 { margin-top: 0; color: #ef4444; }
+        a { color: #3b82f6; text-decoration: none; display: inline-block; margin-top: 1rem; }
+      </style>
+    </head>
+    <body>
+      <div class="card">
+        <h2>Authentication Error</h2>
+        <p>${message}</p>
+        <a href="javascript:history.back()">Go Back</a>
+      </div>
+    </body>
+    </html>
+  `);
+};
+
 exports.renderLogin = (req, res) => {
   const { redirect_uri } = req.query;
   if (!redirect_uri) {
     return res.status(400).send("Missing redirect_uri");
   }
 
-  // If the banking UI already has a deviceId in localStorage it passes it via device_id.
-  // We use it directly so the same ID is verified, instead of generating a different one via CDN.
-  const preloadedDeviceId = (req.query.device_id || '').replace(/[^a-zA-Z0-9_-]/g, '');
+  const knownId = req.cookies.deviceId || '';
 
   const html = `
     <!DOCTYPE html>
@@ -225,25 +251,23 @@ exports.renderLogin = (req, res) => {
         button:disabled { background: #64748b; cursor: not-allowed; }
       </style>
       <script>
-        const preloadedDeviceId = '${preloadedDeviceId}';
+        const knownId = '${knownId}';
 
         function enableForm(deviceId) {
           document.getElementById('deviceIdInput').value = deviceId;
-          localStorage.setItem('deviceId', deviceId);
+          document.cookie = "deviceId=" + deviceId + "; path=/; max-age=31536000";
           document.getElementById('submitBtn').disabled = false;
           document.getElementById('submitBtn').innerText = 'Sign In';
         }
 
-        // Use the ID passed from banking UI localStorage (most cases).
-        // For brand-new users with no stored ID, generate a UUID using the
-        // browser built-in crypto API — no external CDN needed.
-        const knownId = preloadedDeviceId || localStorage.getItem('deviceId');
-        if (knownId) {
-          document.addEventListener('DOMContentLoaded', () => enableForm(knownId));
-        } else {
-          const newId = crypto.randomUUID();
-          document.addEventListener('DOMContentLoaded', () => enableForm(newId));
-        }
+        document.addEventListener('DOMContentLoaded', () => {
+          if (knownId) {
+            enableForm(knownId);
+          } else {
+            const newId = crypto.randomUUID();
+            enableForm(newId);
+          }
+        });
       </script>
     </head>
     <body>
@@ -270,86 +294,115 @@ exports.authorize = async (req, res) => {
     const { email, password, redirect_uri, deviceId } = req.body;
 
     if (!email || !password || !redirect_uri) {
-      return res.status(400).json({ error: "Email, password, and redirect_uri are required" });
+      return renderError(res, "Email, password, and redirect_uri are required.");
     }
 
     const user = await User.findOne({ email });
     if (!user || user.isBlocked || user.disabled || user.deleted) {
-      return res.status(401).json({ error: "Invalid credentials or account blocked" });
+      return renderError(res, "Invalid credentials or account blocked/disabled.");
     }
 
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) {
-      return res.status(401).json({ error: "Invalid credentials" });
+      return renderError(res, "Invalid credentials.");
     }
 
     if (user.role !== 'superadmin') {
       if (!deviceId) {
-        return res.status(403).send("Device ID missing. Please enable javascript or try again.");
-      }
-      
-      const Device = require('@repo/db').Device;
-      const device = await Device.findOne({ userId: user._id, deviceId });
-
-      let requireOtp = false;
-      if (!device) {
-        requireOtp = true;
-      } else if (device.expiresAt && device.expiresAt < new Date()) {
-        requireOtp = true;
+        return renderError(res, "Device ID missing. Please enable cookies/javascript or try again.");
       }
 
-      if (requireOtp) {
-        // Automatically request OTP via Axios to device-service
-        const axios = require('axios');
-        try {
-          await axios.post(`${process.env.DEVICE_SERVICE_URL || 'http://localhost:3005'}/api/devices/otp/request`, {
-            userId: user._id,
-            deviceId,
-            deviceName: req.headers['user-agent']
-          });
-        } catch (e) {
-          console.error("Failed to request OTP during login", e.message);
-          return res.status(500).send("Failed to send OTP. Please try again later.");
-        }
+      if (!user.isAuthenticatorSetup) {
+        const secret = authenticator.generateSecret();
+        user.authenticatorSecret = secret;
+        await user.save();
 
-        const otpHtml = `
+        const otpauth = authenticator.keyuri(user.email, 'ZeroTrustBank', secret);
+        const qrCodeUrl = await qrcode.toDataURL(otpauth);
+
+        const setupHtml = `
           <!DOCTYPE html>
           <html lang="en">
           <head>
             <meta charset="UTF-8">
-            <title>Verify Device - Auth Service</title>
+            <title>Setup Authenticator</title>
             <style>
               body { font-family: 'Inter', sans-serif; background: #0f172a; color: white; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
               .card { background: #1e293b; padding: 2rem; border-radius: 8px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); width: 100%; max-width: 400px; text-align: center; }
-              h2 { margin-top: 0; text-align: center; }
-              p { color: #94a3b8; margin-bottom: 1.5rem; }
+              img { border-radius: 8px; margin: 1rem 0; background: white; padding: 10px; }
               input { width: 100%; padding: 0.75rem; margin: 0.5rem 0 1rem; box-sizing: border-box; border-radius: 4px; border: 1px solid #334155; background: #0f172a; color: white; text-align: center; font-size: 1.5rem; letter-spacing: 0.5rem; }
               button { width: 100%; padding: 0.75rem; background: #10b981; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; }
-              button:hover { background: #059669; }
             </style>
           </head>
           <body>
             <div class="card">
-              <h2>Verify Device</h2>
-              <p>We've sent a 6-digit OTP to your email. Please enter it below to verify this device.</p>
-              <form action="/api/auth/authorize-otp" method="POST">
-                <input type="hidden" name="redirect_uri" value="${redirect_uri}" />
-                <input type="hidden" name="deviceId" value="${deviceId}" />
+              <h2>Setup Authenticator</h2>
+              <p>Scan the QR code with your authenticator app.</p>
+              <img src="${qrCodeUrl}" alt="QR Code" />
+              <form action="/api/auth/setup-authenticator" method="POST">
                 <input type="hidden" name="userId" value="${user._id}" />
-                <input type="text" name="otp" required maxlength="6" placeholder="000000" autocomplete="off" />
-                <button type="submit">Verify OTP</button>
+                <input type="text" name="token" required maxlength="6" placeholder="000000" autocomplete="off" />
+                <button type="submit">Verify & Complete Setup</button>
               </form>
             </div>
           </body>
           </html>
         `;
-        return res.send(otpHtml);
+        return res.send(setupHtml);
+      }
+
+      const device = await Device.findOne({ userId: user._id, deviceId });
+
+      let requireVerification = false;
+      if (!device) {
+        requireVerification = true;
+      } else if (device.expiresAt && device.expiresAt < new Date()) {
+        requireVerification = true;
+      }
+
+      if (requireVerification) {
+        const verifyHtml = `
+          <!DOCTYPE html>
+          <html lang="en">
+          <head>
+            <meta charset="UTF-8">
+            <title>Verify Device</title>
+            <style>
+              body { font-family: 'Inter', sans-serif; background: #0f172a; color: white; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
+              .card { background: #1e293b; padding: 2rem; border-radius: 8px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); width: 100%; max-width: 400px; text-align: center; }
+              input { width: 100%; padding: 0.75rem; margin: 0.5rem 0 1rem; box-sizing: border-box; border-radius: 4px; border: 1px solid #334155; background: #0f172a; color: white; text-align: center; font-size: 1.5rem; letter-spacing: 0.5rem; }
+              button { width: 100%; padding: 0.75rem; background: #10b981; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; }
+              .fallback-btn { background: #334155; margin-top: 1rem; font-size: 0.875rem; }
+            </style>
+          </head>
+          <body>
+            <div class="card">
+              <h2>Verify New Device</h2>
+              <p>Enter the code from your authenticator app.</p>
+              <form action="/api/auth/verify-device-totp" method="POST">
+                <input type="hidden" name="redirect_uri" value="${redirect_uri}" />
+                <input type="hidden" name="deviceId" value="${deviceId}" />
+                <input type="hidden" name="userId" value="${user._id}" />
+                <input type="text" name="token" required maxlength="6" placeholder="000000" autocomplete="off" />
+                <button type="submit">Verify Code</button>
+              </form>
+              <form action="/api/auth/fallback-otp" method="POST">
+                <input type="hidden" name="redirect_uri" value="${redirect_uri}" />
+                <input type="hidden" name="deviceId" value="${deviceId}" />
+                <input type="hidden" name="userId" value="${user._id}" />
+                <button type="submit" class="fallback-btn">No authenticator, use email</button>
+              </form>
+            </div>
+          </body>
+          </html>
+        `;
+        return res.send(verifyHtml);
       }
     }
 
     // Generate Auth Code
     const code = crypto.randomBytes(16).toString('hex');
-    const expiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5 mins expiry
+    const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
 
     await AuthCode.create({
       code,
@@ -366,7 +419,133 @@ exports.authorize = async (req, res) => {
     return res.redirect(`${redirect_uri}?code=${code}`);
   } catch (error) {
     console.error("Authorize error:", error);
-    res.status(500).json({ error: "Internal server error" });
+    renderError(res, "Internal server error.");
+  }
+};
+
+
+
+exports.setupAuthenticator = async (req, res) => {
+  try {
+    const { userId, token } = req.body;
+    const user = await User.findById(userId);
+    if (!user) return renderError(res, "User not found.");
+
+    const isValid = authenticator.verify({ token, secret: user.authenticatorSecret });
+    if (!isValid) {
+      return renderError(res, "Invalid authenticator code. Please try again.");
+    }
+
+    user.isAuthenticatorSetup = true;
+    await user.save();
+
+    res.send(`
+      <!DOCTYPE html>
+      <html lang="en">
+      <head>
+        <title>Setup Complete</title>
+        <style>body { font-family: 'Inter', sans-serif; background: #0f172a; color: white; display: flex; justify-content: center; align-items: center; height: 100vh; text-align: center; } a { color: #3b82f6; }</style>
+      </head>
+      <body>
+        <div>
+          <h2>Setup Complete!</h2>
+          <p>Your authenticator app has been verified successfully.</p>
+          <p>You have been logged out for security. Please log in again.</p>
+          <a href="http://localhost:5002">Go to Login</a>
+        </div>
+      </body>
+      </html>
+    `);
+  } catch (err) {
+    console.error(err);
+    renderError(res, "Internal server error.");
+  }
+};
+
+exports.verifyDeviceTotp = async (req, res) => {
+  try {
+    const { userId, deviceId, token, redirect_uri } = req.body;
+    const user = await User.findById(userId);
+    if (!user) return renderError(res, "User not found.");
+
+    const isValid = authenticator.verify({ token, secret: user.authenticatorSecret });
+    if (!isValid) {
+      user.riskScore += 10;
+      await user.save();
+      return renderError(res, "Invalid authenticator code. Risk score increased.");
+    }
+
+    // Create 5-hour session device
+    const device = new Device({
+      userId,
+      deviceId,
+      deviceName: req.headers['user-agent'] || 'Unknown Device',
+      isTrusted: false,
+      expiresAt: new Date(Date.now() + 5 * 3600000), // 5 hours
+    });
+    await device.save();
+
+    const code = crypto.randomBytes(16).toString('hex');
+    const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
+
+    await AuthCode.create({ code, userId, redirectUri: redirect_uri, expiresAt });
+    await AuditLog.create({ userId, action: "oauth_authorize" });
+
+    return res.redirect(`${redirect_uri}?code=${code}`);
+  } catch (err) {
+    console.error(err);
+    renderError(res, "Internal server error.");
+  }
+};
+
+exports.fallbackOtp = async (req, res) => {
+  try {
+    const { userId, deviceId, redirect_uri } = req.body;
+    const axios = require('axios');
+
+    try {
+      await axios.post(`${process.env.DEVICE_SERVICE_URL || 'http://localhost:3005'}/api/devices/otp/request`, {
+        userId,
+        deviceId,
+        deviceName: req.headers['user-agent']
+      });
+    } catch (e) {
+      console.error("Failed to request OTP during login", e.message);
+      return renderError(res, "Failed to send OTP email. Please try again later.");
+    }
+
+    const otpHtml = `
+      <!DOCTYPE html>
+      <html lang="en">
+      <head>
+        <meta charset="UTF-8">
+        <title>Verify Device - OTP</title>
+        <style>
+          body { font-family: 'Inter', sans-serif; background: #0f172a; color: white; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
+          .card { background: #1e293b; padding: 2rem; border-radius: 8px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); width: 100%; max-width: 400px; text-align: center; }
+          input { width: 100%; padding: 0.75rem; margin: 0.5rem 0 1rem; box-sizing: border-box; border-radius: 4px; border: 1px solid #334155; background: #0f172a; color: white; text-align: center; font-size: 1.5rem; letter-spacing: 0.5rem; }
+          button { width: 100%; padding: 0.75rem; background: #10b981; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; }
+        </style>
+      </head>
+      <body>
+        <div class="card">
+          <h2>Verify Device</h2>
+          <p>We've sent a 6-digit OTP to your email.</p>
+          <form action="/api/auth/authorize-otp" method="POST">
+            <input type="hidden" name="redirect_uri" value="${redirect_uri}" />
+            <input type="hidden" name="deviceId" value="${deviceId}" />
+            <input type="hidden" name="userId" value="${userId}" />
+            <input type="text" name="otp" required maxlength="6" placeholder="000000" autocomplete="off" />
+            <button type="submit">Verify OTP</button>
+          </form>
+        </div>
+      </body>
+      </html>
+    `;
+    return res.send(otpHtml);
+  } catch (err) {
+    console.error(err);
+    renderError(res, "Internal server error.");
   }
 };
 
@@ -374,7 +553,7 @@ exports.authorizeOtp = async (req, res) => {
   try {
     const { userId, deviceId, otp, redirect_uri } = req.body;
     if (!userId || !deviceId || !otp || !redirect_uri) {
-      return res.status(400).send("Missing parameters for OTP verification.");
+      return renderError(res, "Missing parameters for OTP verification.");
     }
 
     const axios = require('axios');
@@ -383,32 +562,24 @@ exports.authorizeOtp = async (req, res) => {
         userId, deviceId, otp
       });
     } catch (e) {
-      return res.status(401).send("Invalid or expired OTP. <a href='javascript:history.back()'>Go back</a>");
+      const user = await User.findById(userId);
+      if (user) {
+        user.riskScore += 10;
+        await user.save();
+      }
+      return renderError(res, "Invalid or expired OTP. Risk score increased.");
     }
 
-    // Device verified, generate auth code
-    const crypto = require('crypto');
     const code = crypto.randomBytes(16).toString('hex');
     const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
 
-    const AuthCode = require('@repo/db').AuthCode;
-    await AuthCode.create({
-      code,
-      userId,
-      redirectUri: redirect_uri,
-      expiresAt
-    });
-
-    const AuditLog = require('@repo/db').AuditLog;
-    await AuditLog.create({
-      userId,
-      action: "oauth_authorize",
-    });
+    await AuthCode.create({ code, userId, redirectUri: redirect_uri, expiresAt });
+    await AuditLog.create({ userId, action: "oauth_authorize" });
 
     return res.redirect(`${redirect_uri}?code=${code}`);
   } catch (error) {
     console.error("Authorize OTP error:", error);
-    res.status(500).send("Internal server error");
+    renderError(res, "Internal server error.");
   }
 };
 
@@ -581,7 +752,7 @@ exports.verify = async (req, res) => {
 
     // --- ZERO-TRUST DEVICE VERIFICATION ---
     const { deviceId } = req.body;
-    
+
     if (!deviceId) {
       return res.status(403).json({ authorized: false, error: 'Device ID required', code: 'DEVICE_UNRECOGNIZED' });
     }
