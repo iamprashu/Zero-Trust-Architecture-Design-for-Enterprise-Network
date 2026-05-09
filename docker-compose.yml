@@ -40,6 +40,9 @@ services:
       - REFRESH_SECRET=admindi34234
       - SUPERADMIN_EMAIL=admin@gmail.com
       - SUPERADMIN_PASSWORD=admin@123
+      - WEBAUTHN_RP_NAME=NexusBank
+      - WEBAUTHN_RP_ID=localhost
+      - WEBAUTHN_ORIGIN=http://localhost
     depends_on:
       - mongodb
     deploy:
@@ -76,7 +79,7 @@ services:
       - PORT=5002
       - CORS_ORIGINS=http://localhost
       - EMAIL_USER=iamprashu.ca@gmail.com
-      - EMAIL_PASS=utdi ldlv dnsz usie
+      - EMAIL_PASS=
       - EMAIL_FROM=Zero Trust Security <iamprashu.ca@gmail.com>
     depends_on:
       - mongodb
