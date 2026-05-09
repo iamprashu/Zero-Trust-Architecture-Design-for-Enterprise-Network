@@ -22,8 +22,8 @@ const UsersPage = () => {
     try {
       const headers = { 'Authorization': `Bearer ${token}` };
       const [uRes, rRes] = await Promise.all([
-        fetchWithAxios('http://localhost:5000/api/admin/users', { headers }),
-        fetchWithAxios('http://localhost:5000/api/admin/roles', { headers })
+        fetchWithAxios('/api/admin/users', { headers }),
+        fetchWithAxios('/api/admin/roles', { headers })
       ]);
       const uData = await uRes.json();
       const rData = await rRes.json();
@@ -41,7 +41,7 @@ const UsersPage = () => {
   const handleCreateUser = async (e) => {
     e.preventDefault();
     try {
-      const res = await fetchWithAxios('http://localhost:5000/api/admin/create-user', {
+      const res = await fetchWithAxios('/api/admin/create-user', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
         body: JSON.stringify({ email: newEmail, password: newPassword, role: newRole })
@@ -62,7 +62,7 @@ const UsersPage = () => {
 
   const handleRoleChange = async (userId, newRoleVal) => {
     try {
-      const res = await fetchWithAxios(`http://localhost:5000/api/admin/users/${userId}/role`, {
+      const res = await fetchWithAxios(`/api/admin/users/${userId}/role`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
         body: JSON.stringify({ role: newRoleVal })
@@ -80,7 +80,7 @@ const UsersPage = () => {
 
   const toggleStatus = async (userId, currentStatus, type) => {
     try {
-      const res = await fetchWithAxios(`http://localhost:5000/api/admin/users/disable`, {
+      const res = await fetchWithAxios(`/api/admin/users/disable`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
         body: JSON.stringify({ userId, disabled: !currentStatus })
@@ -93,7 +93,7 @@ const UsersPage = () => {
   
   const resetRisk = async (userId) => {
     try {
-      const res = await fetchWithAxios(`http://localhost:5000/api/admin/users/risk`, {
+      const res = await fetchWithAxios(`/api/admin/users/risk`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
         body: JSON.stringify({ userId, riskScore: 0 })

@@ -10,7 +10,7 @@ dotenv.config({ path: path.resolve(__dirname, '../../../.env') }); // root .env 
 
 const app = express();
 app.use(express.json());
-const corsOrigins = (process.env.CORS_ORIGINS || 'http://localhost:5173,http://localhost:5002').split(',');
+const corsOrigins = (process.env.CORS_ORIGINS || 'http://localhost').split(',');
 const corsOptions = {
   origin: corsOrigins,
   allowedHeaders: ["Content-Type", "Authorization", "x-device-id"],

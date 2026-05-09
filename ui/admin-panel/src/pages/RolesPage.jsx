@@ -21,8 +21,8 @@ const RolesPage = () => {
     try {
       const headers = { 'Authorization': `Bearer ${token}` };
       const [rRes, pRes] = await Promise.all([
-        fetchWithAxios('http://localhost:5000/api/admin/roles', { headers }),
-        fetchWithAxios('http://localhost:5000/api/admin/permissions', { headers })
+        fetchWithAxios('/api/admin/roles', { headers }),
+        fetchWithAxios('/api/admin/permissions', { headers })
       ]);
       const rData = await rRes.json();
       const pData = await pRes.json();
@@ -75,8 +75,8 @@ const RolesPage = () => {
     e.preventDefault();
     
     const url = editMode 
-      ? `http://localhost:5000/api/admin/roles/${currentRoleId}`
-      : 'http://localhost:5000/api/admin/roles';
+      ? `/api/admin/roles/${currentRoleId}`
+      : '/api/admin/roles';
       
     const method = editMode ? 'PATCH' : 'POST';
 
@@ -101,7 +101,7 @@ const RolesPage = () => {
   const handleDelete = async (roleId, roleName) => {
     if(!window.confirm(`Delete role ${roleName}?`)) return;
     try {
-      const res = await fetchWithAxios(`http://localhost:5000/api/admin/roles/${roleId}`, {
+      const res = await fetchWithAxios(`/api/admin/roles/${roleId}`, {
         method: 'DELETE',
         headers: { 'Authorization': `Bearer ${token}` }
       });

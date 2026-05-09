@@ -19,7 +19,7 @@ const Login = () => {
     setError('');
 
     try {
-      const res = await fetchWithAxios('http://localhost:5000/api/auth/login', {
+      const res = await fetchWithAxios('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password })

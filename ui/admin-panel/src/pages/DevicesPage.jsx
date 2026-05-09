@@ -13,7 +13,7 @@ const DevicesPage = () => {
   const fetchDevices = async () => {
     try {
       setLoading(true);
-      const res = await api.get(`${import.meta.env.VITE_DEVICE_SERVICE_URL || 'http://localhost:3005'}/api/devices`);
+      const res = await api.get(`/devices`);
       if (res.ok) {
         const data = await res.json();
         setDevices(data.devices || []);
@@ -29,7 +29,7 @@ const DevicesPage = () => {
 
   const handleApprove = async (deviceId) => {
     try {
-      await api.patch(`${import.meta.env.VITE_DEVICE_SERVICE_URL || 'http://localhost:3005'}/api/devices/${deviceId}/approve`);
+      await api.patch(`/devices/${deviceId}/approve`);
       fetchDevices();
     } catch (err) {
       alert('Failed to approve device');
@@ -38,7 +38,7 @@ const DevicesPage = () => {
 
   const handleRevoke = async (deviceId) => {
     try {
-      await api.patch(`${import.meta.env.VITE_DEVICE_SERVICE_URL || 'http://localhost:3005'}/api/devices/${deviceId}/revoke`);
+      await api.patch(`/devices/${deviceId}/revoke`);
       fetchDevices();
     } catch (err) {
       alert('Failed to revoke device');

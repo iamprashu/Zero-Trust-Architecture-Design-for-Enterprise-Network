@@ -29,7 +29,7 @@ function App() {
   return (
     <>
       <DeviceOtpModal />
-      <BrowserRouter>
+      <BrowserRouter basename="/admin">
       <Routes>
         <Route path="/login" element={<Login />} />
         

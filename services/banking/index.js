@@ -5,7 +5,7 @@ const { connectDB, Account, Transaction } = require("@repo/db");
 const { authorize } = require("./middleware/authorize");
 
 const app = express();
-const corsOrigins = (process.env.CORS_ORIGINS || 'http://localhost:5173,http://localhost:5002').split(',');
+const corsOrigins = (process.env.CORS_ORIGINS || 'http://localhost').split(',');
 const corsOptions = {
   origin: corsOrigins,
   allowedHeaders: ["Content-Type", "Authorization", "x-device-id"],
@@ -20,8 +20,8 @@ const PORT = process.env.PORT || 5001;
 
 // ─── Account APIs ────────────────────────────────────────────────────────────
 
-// GET /api/accounts  → list all accounts
-app.get("/api/accounts", authorize(["READ_ACCOUNT"]), async (req, res) => {
+// GET /api/banking/accounts  → list all accounts
+app.get("/api/banking/accounts", authorize(["READ_ACCOUNT"]), async (req, res) => {
   try {
     const accounts = await Account.find().lean();
     res.json({ accounts });
@@ -31,8 +31,8 @@ app.get("/api/accounts", authorize(["READ_ACCOUNT"]), async (req, res) => {
   }
 });
 
-// POST /api/account  → create a new account
-app.post("/api/account", authorize(["CREATE_ACCOUNT"]), async (req, res) => {
+// POST /api/banking/account  → create a new account
+app.post("/api/banking/account", authorize(["CREATE_ACCOUNT"]), async (req, res) => {
   try {
     const { ownerName, accountType, initialDeposit } = req.body;
     if (!ownerName)
@@ -58,9 +58,9 @@ app.post("/api/account", authorize(["CREATE_ACCOUNT"]), async (req, res) => {
   }
 });
 
-// DELETE /api/account/:accountNumber  → delete an account by account number
+// DELETE /api/banking/account/:accountNumber  → delete an account by account number
 app.delete(
-  "/api/account/:accountNumber",
+  "/api/banking/account/:accountNumber",
   authorize(["DELETE_ACCOUNT"]),
   async (req, res) => {
     try {
@@ -79,9 +79,9 @@ app.delete(
 
 // ─── Transaction APIs ─────────────────────────────────────────────────────────
 
-// GET /api/transactions/:accountNumber  → list all transactions for an account
+// GET /api/banking/transactions/:accountNumber  → list all transactions for an account
 app.get(
-  "/api/transactions/:accountNumber",
+  "/api/banking/transactions/:accountNumber",
   authorize(["READ_TRANSACTION"]),
   async (req, res) => {
     try {
@@ -97,9 +97,9 @@ app.get(
   },
 );
 
-// POST /api/transactions  → create a CREDIT or DEBIT transaction
+// POST /api/banking/transactions  → create a CREDIT or DEBIT transaction
 app.post(
-  "/api/transactions",
+  "/api/banking/transactions",
   authorize(["CREATE_TRANSACTION"]),
   async (req, res) => {
     try {
@@ -140,8 +140,8 @@ app.post(
   },
 );
 
-// POST /api/loan  → process a loan disbursement
-app.post("/api/loan", authorize(["CREATE_LOAN_TRANSACTION"]), async (req, res) => {
+// POST /api/banking/loan  → process a loan disbursement
+app.post("/api/banking/loan", authorize(["CREATE_LOAN_TRANSACTION"]), async (req, res) => {
   try {
     const { accountNumber, expectedAmount } = req.body;
 

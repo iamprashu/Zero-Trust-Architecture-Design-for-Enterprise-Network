@@ -11,7 +11,7 @@ function getCookie(name) {
 let fpPromiseCache = fpPromise.load();
 let deviceId = getCookie('deviceId');
 
-const AUTH_BASE = import.meta.env.VITE_AUTH_URL || 'http://localhost:5000';
+const AUTH_BASE = import.meta.env.VITE_AUTH_URL || '';
 
 const api = axios.create({
   baseURL: `${AUTH_BASE}/api`,
@@ -114,9 +114,8 @@ export const fetchWithAxios = async (url, options = {}) => {
     headers: options.headers || {}
   };
   
-  // Clean up url if it contains baseURL
-  if (axiosConfig.url.startsWith('http://localhost:5000/api')) {
-    axiosConfig.url = axiosConfig.url.replace('http://localhost:5000/api', '');
+  if (axiosConfig.url.startsWith('/api')) {
+    axiosConfig.url = axiosConfig.url.replace('/api', '');
   }
 
   // The interceptor wraps the return as { ok, json() }

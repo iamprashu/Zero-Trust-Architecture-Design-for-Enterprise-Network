@@ -1,7 +1,7 @@
 import { Shield } from 'lucide-react'
 
-const AUTH_URL = import.meta.env.VITE_AUTH_URL || 'http://localhost:5000'
-const REDIRECT_URI = import.meta.env.VITE_REDIRECT_URI || 'http://localhost:5002'
+const AUTH_URL = import.meta.env.VITE_AUTH_URL || ''
+const REDIRECT_URI = import.meta.env.VITE_REDIRECT_URI || window.location.origin
 
 export default function Login() {
   const handleLogin = () => {

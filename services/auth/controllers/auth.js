@@ -451,7 +451,7 @@ exports.setupAuthenticator = async (req, res) => {
           <h2>Setup Complete!</h2>
           <p>Your authenticator app has been verified successfully.</p>
           <p>You have been logged out for security. Please log in again.</p>
-          <a href="http://localhost:5002">Go to Login</a>
+          <a href="http://localhost">Go to Login</a>
         </div>
       </body>
       </html>

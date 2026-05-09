@@ -12,9 +12,9 @@ const Dashboard = () => {
       try {
         const headers = { 'Authorization': `Bearer ${token}` };
         const [usersRes, rolesRes, logsRes] = await Promise.all([
-          fetchWithAxios('http://localhost:5000/api/admin/users', { headers }),
-          fetchWithAxios('http://localhost:5000/api/admin/roles', { headers }),
-          fetchWithAxios('http://localhost:5000/api/admin/audit-logs', { headers })
+          fetchWithAxios('/api/admin/users', { headers }),
+          fetchWithAxios('/api/admin/roles', { headers }),
+          fetchWithAxios('/api/admin/audit-logs', { headers })
         ]);
         
         const users = await usersRes.json();

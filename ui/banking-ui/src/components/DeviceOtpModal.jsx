@@ -41,7 +41,7 @@ const DeviceOtpModal = () => {
     setLoading(true);
     setError('');
     try {
-      await axios.post(`${import.meta.env.VITE_DEVICE_SERVICE_URL || 'http://localhost:3005'}/api/devices/otp/request`, {
+      await axios.post(`/api/devices/otp/request`, {
         userId,
         deviceId,
         deviceName: navigator.userAgent
@@ -58,7 +58,7 @@ const DeviceOtpModal = () => {
     setLoading(true);
     setError('');
     try {
-      await axios.post(`${import.meta.env.VITE_DEVICE_SERVICE_URL || 'http://localhost:3005'}/api/devices/otp/verify`, {
+      await axios.post(`/api/devices/otp/verify`, {
         userId,
         deviceId,
         otp

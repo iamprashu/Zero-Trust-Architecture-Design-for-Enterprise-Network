@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import axios from 'axios'
 import { Routes, Route, useNavigate, Navigate } from 'react-router-dom'
 import Login from './pages/Login'
 import DashboardLayout from './pages/DashboardLayout'
@@ -10,8 +11,8 @@ import RestrictedModal from './components/RestrictedModal'
 import DeviceOtpModal from './components/DeviceOtpModal'
 import api from './utils/api'
 
-const AUTH_URL = import.meta.env.VITE_AUTH_URL || 'http://localhost:5000'
-const REDIRECT_URI = import.meta.env.VITE_REDIRECT_URI || 'http://localhost:5002'
+const AUTH_URL = import.meta.env.VITE_AUTH_URL || ''
+const REDIRECT_URI = import.meta.env.VITE_REDIRECT_URI || window.location.origin
 
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false)
@@ -26,8 +27,8 @@ function App() {
 
       if (code) {
         try {
-          const res = await api.post(`${AUTH_URL}/api/auth/token`, { code })
-          const data = res; // response interceptor returns data directly
+          const res = await axios.post(`${AUTH_URL}/api/auth/token`, { code })
+          const data = res.data; // Use res.data directly since axios doesn't have the response unwrapper
           
           if (data && data.accessToken) {
             localStorage.setItem('accessToken', data.accessToken)
