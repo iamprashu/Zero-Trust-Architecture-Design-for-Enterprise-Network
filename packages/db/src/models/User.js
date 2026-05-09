@@ -35,6 +35,14 @@ const userSchema = new mongoose.Schema({
   refreshToken: {
     type: String,
     default: null
+  },
+  authenticatorSecret: {
+    type: String,
+    default: null
+  },
+  isAuthenticatorSetup: {
+    type: Boolean,
+    default: false
   }
 }, {
   timestamps: true
