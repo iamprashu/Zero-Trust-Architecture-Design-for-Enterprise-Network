@@ -10,6 +10,8 @@ const Account = require('./models/Account');
 const Transaction = require('./models/Transaction');
 const Device = require('./models/Device');
 const DeviceOtp = require('./models/DeviceOtp');
+const WebAuthnCredential = require('./models/WebAuthnCredential');
+const SessionKey = require('./models/SessionKey');
 
 module.exports = {
   connectDB,
@@ -24,4 +26,6 @@ module.exports = {
   Transaction,
   Device,
   DeviceOtp,
+  WebAuthnCredential,
+  SessionKey,
 };

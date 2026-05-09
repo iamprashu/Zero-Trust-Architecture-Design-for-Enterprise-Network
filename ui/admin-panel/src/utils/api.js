@@ -1,54 +1,41 @@
 import axios from 'axios';
-import fpPromise from '@fingerprintjs/fingerprintjs';
-
-function getCookie(name) {
-  const value = `; ${document.cookie}`;
-  const parts = value.split(`; ${name}=`);
-  if (parts.length === 2) return parts.pop().split(';').shift();
-  return null;
-}
-
-let fpPromiseCache = fpPromise.load();
-let deviceId = getCookie('deviceId');
+import { signRequest, hasSessionKey } from './crypto';
 
 const AUTH_BASE = import.meta.env.VITE_AUTH_URL || '';
 
 const api = axios.create({
   baseURL: `${AUTH_BASE}/api`,
-  withCredentials: true, // important for cookies
+  withCredentials: true,
 });
 
-// Request Interceptor to add Device ID
+// ── Request Interceptor ─────────────────────────────────────────────────────
 api.interceptors.request.use(async (config) => {
-  let storedDeviceId = getCookie('deviceId') || deviceId;
-  
-  if (!storedDeviceId) {
-    try {
-      const fp = await fpPromiseCache;
-      const result = await fp.get();
-      storedDeviceId = result.visitorId;
-      deviceId = storedDeviceId;
-      document.cookie = `deviceId=${storedDeviceId}; path=/; max-age=31536000`;
-    } catch (e) {
-      console.error("Fingerprint error", e);
-    }
-  }
-
-  if (storedDeviceId) {
-    config.headers['X-Device-Id'] = storedDeviceId;
-  }
-  
   const token = localStorage.getItem('adminToken');
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
   }
+
+  // Sign the request with the in-memory session key
+  if (hasSessionKey()) {
+    const base = (config.baseURL || '').replace(/\/$/, '');
+    const path = config.url || '';
+    const fullUrl = path.startsWith('/') ? base + path : base + '/' + path;
+    const method = (config.method || 'GET').toUpperCase();
+    const body = config.data || null;
+
+    const sig = await signRequest(method, fullUrl, body);
+    if (sig) {
+      config.headers['X-Signature'] = sig.signature;
+      config.headers['X-Timestamp'] = sig.timestamp;
+    }
+  }
+
   return config;
 });
 
-// Response Interceptor
+// ── Response Interceptor ────────────────────────────────────────────────────
 api.interceptors.response.use(
   (response) => {
-    // Return a fetch-like response object for backward compatibility
     return {
       ok: true,
       status: response.status,
@@ -59,39 +46,30 @@ api.interceptors.response.use(
   async (error) => {
     const originalRequest = error.config;
     
-    // Catch 401 Unauthorized for token refresh
+    // 401 — try refresh
     if (error.response && error.response.status === 401 && !originalRequest._retry) {
       originalRequest._retry = true;
       try {
-        // Automatically attempt to refresh the token using the HttpOnly cookie
         await axios.post(`${AUTH_BASE}/api/auth/refresh`, {}, { withCredentials: true });
-        
-        // Retry the original failed request
         return api(originalRequest);
       } catch (refreshError) {
-        // If refresh fails too, they must re-login
         localStorage.removeItem('adminToken');
         localStorage.removeItem('user');
-        window.location.href = '/login';
+        window.location.href = '/admin/login';
         return Promise.reject(refreshError);
       }
     }
     
-    // Handle Device Errors
+    // 403 — session key issues
     if (error.response && error.response.status === 403) {
-      if (error.response.data.code === 'DEVICE_UNRECOGNIZED' || error.response.data.code === 'DEVICE_EXPIRED') {
-        // Dispatch custom event for App.jsx to pick up
-        window.dispatchEvent(new CustomEvent('device_unrecognized', { 
-          detail: { 
-            isFirstLogin: error.response.data.isFirstLogin,
-            code: error.response.data.code
-          } 
+      const code = error.response.data?.code;
+      if (code === 'SESSION_KEY_REQUIRED' || code === 'SIGNATURE_INVALID' || code === 'TIMESTAMP_EXPIRED') {
+        window.dispatchEvent(new CustomEvent('session-expired', {
+          detail: 'Session key expired. Please login again.'
         }));
-        // We reject the promise, the UI will wait for OTP verification
       }
     }
 
-    // Return a fetch-like error response object for backward compatibility
     if (error.response) {
        return {
          ok: false,
@@ -110,7 +88,6 @@ export const fetchWithAxios = async (url, options = {}) => {
     url,
     method: options.method || 'GET',
     data: options.body ? JSON.parse(options.body) : undefined,
-    // Add default headers unless overridden
     headers: options.headers || {}
   };
   
@@ -118,7 +95,6 @@ export const fetchWithAxios = async (url, options = {}) => {
     axiosConfig.url = axiosConfig.url.replace('/api', '');
   }
 
-  // The interceptor wraps the return as { ok, json() }
   return await api(axiosConfig);
 };
 

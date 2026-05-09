@@ -4,6 +4,7 @@ const router = express.Router();
 const { verifyJwt, rbacGuard, superAdminGuard } = require('../middleware/authMiddleware');
 const authController = require('../controllers/auth');
 const adminController = require('../controllers/admin');
+const webauthnController = require('../controllers/webauthn');
 
 // ----------------------
 // Auth Routes
@@ -20,6 +21,13 @@ router.post('/auth/verify', authController.verify);
 router.post('/auth/verify-access', authController.verifyAccess);
 router.post('/auth/refresh', authController.refresh);
 router.post('/auth/logout', verifyJwt, authController.logout);
+
+// WebAuthn Routes
+router.post('/auth/webauthn/register-options', webauthnController.registrationOptions);
+router.post('/auth/webauthn/register', webauthnController.registrationVerify);
+router.post('/auth/webauthn/login-options', webauthnController.loginOptions);
+router.post('/auth/webauthn/login', webauthnController.loginVerify);
+router.post('/auth/session-key', webauthnController.storeSessionKey);
 
 // ----------------------
 // Admin Routes (protected)
@@ -53,6 +61,11 @@ router.delete('/admin/permissions/:id', rbacGuard, adminController.deletePermiss
 // API Mapping Management
 router.post('/admin/mappings', rbacGuard, adminController.createApiMapping);
 router.get('/admin/mappings', rbacGuard, adminController.getApiMappings);
+
+// Device Management (WebAuthn)
+router.get('/admin/users/:userId/devices', rbacGuard, adminController.getUserDevices);
+router.delete('/admin/devices/:credentialId', rbacGuard, adminController.revokeDevice);
+router.delete('/admin/users/:userId/devices', rbacGuard, adminController.revokeAllDevices);
 
 
 module.exports = router;

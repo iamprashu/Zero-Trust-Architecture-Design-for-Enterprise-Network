@@ -233,8 +233,6 @@ exports.renderLogin = (req, res) => {
     return res.status(400).send("Missing redirect_uri");
   }
 
-  const knownId = req.cookies.deviceId || '';
-
   const html = `
     <!DOCTYPE html>
     <html lang="en">
@@ -248,39 +246,18 @@ exports.renderLogin = (req, res) => {
         input { width: 100%; padding: 0.75rem; margin: 0.5rem 0 1rem; box-sizing: border-box; border-radius: 4px; border: 1px solid #334155; background: #0f172a; color: white; }
         button { width: 100%; padding: 0.75rem; background: #3b82f6; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; }
         button:hover { background: #2563eb; }
-        button:disabled { background: #64748b; cursor: not-allowed; }
       </style>
-      <script>
-        const knownId = '${knownId}';
-
-        function enableForm(deviceId) {
-          document.getElementById('deviceIdInput').value = deviceId;
-          document.cookie = "deviceId=" + deviceId + "; path=/; max-age=31536000";
-          document.getElementById('submitBtn').disabled = false;
-          document.getElementById('submitBtn').innerText = 'Sign In';
-        }
-
-        document.addEventListener('DOMContentLoaded', () => {
-          if (knownId) {
-            enableForm(knownId);
-          } else {
-            const newId = crypto.randomUUID();
-            enableForm(newId);
-          }
-        });
-      </script>
     </head>
     <body>
       <div class="card">
         <h2>Secure Login</h2>
         <form action="/api/auth/authorize" method="POST">
           <input type="hidden" name="redirect_uri" value="${redirect_uri}" />
-          <input type="hidden" name="deviceId" id="deviceIdInput" value="" />
           <div style="text-align: left;"><label>Email</label></div>
           <input type="email" name="email" required />
           <div style="text-align: left;"><label>Password</label></div>
           <input type="password" name="password" required />
-          <button type="submit" id="submitBtn" disabled>Loading Security...</button>
+          <button type="submit">Sign In</button>
         </form>
       </div>
     </body>
@@ -292,6 +269,7 @@ exports.renderLogin = (req, res) => {
 exports.authorize = async (req, res) => {
   try {
     const { email, password, redirect_uri, deviceId } = req.body;
+    const isNewDevice = req.body.new_device === 'true' || req.query.new_device === 'true';
 
     if (!email || !password || !redirect_uri) {
       return renderError(res, "Email, password, and redirect_uri are required.");
@@ -307,97 +285,262 @@ exports.authorize = async (req, res) => {
       return renderError(res, "Invalid credentials.");
     }
 
-    if (user.role !== 'superadmin') {
-      if (!deviceId) {
-        return renderError(res, "Device ID missing. Please enable cookies/javascript or try again.");
-      }
+    // TOTP Authenticator setup (first time ever for ANY user including superadmin)
+    if (!user.isAuthenticatorSetup) {
+      const secret = authenticator.generateSecret();
+      user.authenticatorSecret = secret;
+      await user.save();
 
-      if (!user.isAuthenticatorSetup) {
-        const secret = authenticator.generateSecret();
-        user.authenticatorSecret = secret;
-        await user.save();
+      const otpauth = authenticator.keyuri(user.email, 'ZeroTrustBank', secret);
+      const qrCodeUrl = await qrcode.toDataURL(otpauth);
 
-        const otpauth = authenticator.keyuri(user.email, 'ZeroTrustBank', secret);
-        const qrCodeUrl = await qrcode.toDataURL(otpauth);
+      const setupHtml = `
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+          <meta charset="UTF-8">
+          <title>Setup Authenticator</title>
+          <style>
+            body { font-family: 'Inter', sans-serif; background: #0f172a; color: white; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
+            .card { background: #1e293b; padding: 2rem; border-radius: 8px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); width: 100%; max-width: 400px; text-align: center; }
+            img { border-radius: 8px; margin: 1rem 0; background: white; padding: 10px; }
+            input { width: 100%; padding: 0.75rem; margin: 0.5rem 0 1rem; box-sizing: border-box; border-radius: 4px; border: 1px solid #334155; background: #0f172a; color: white; text-align: center; font-size: 1.5rem; letter-spacing: 0.5rem; }
+            button { width: 100%; padding: 0.75rem; background: #10b981; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; }
+          </style>
+        </head>
+        <body>
+          <div class="card">
+            <h2>Setup Authenticator</h2>
+            <p>Scan the QR code with your authenticator app.</p>
+            <img src="${qrCodeUrl}" alt="QR Code" />
+            <form action="/api/auth/setup-authenticator" method="POST">
+              <input type="hidden" name="userId" value="${user._id}" />
+              <input type="text" name="token" required maxlength="6" placeholder="000000" autocomplete="off" />
+              <button type="submit">Verify & Complete Setup</button>
+            </form>
+          </div>
+        </body>
+        </html>
+      `;
+      return res.send(setupHtml);
+    }
 
-        const setupHtml = `
-          <!DOCTYPE html>
-          <html lang="en">
-          <head>
-            <meta charset="UTF-8">
-            <title>Setup Authenticator</title>
-            <style>
-              body { font-family: 'Inter', sans-serif; background: #0f172a; color: white; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
-              .card { background: #1e293b; padding: 2rem; border-radius: 8px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); width: 100%; max-width: 400px; text-align: center; }
-              img { border-radius: 8px; margin: 1rem 0; background: white; padding: 10px; }
-              input { width: 100%; padding: 0.75rem; margin: 0.5rem 0 1rem; box-sizing: border-box; border-radius: 4px; border: 1px solid #334155; background: #0f172a; color: white; text-align: center; font-size: 1.5rem; letter-spacing: 0.5rem; }
-              button { width: 100%; padding: 0.75rem; background: #10b981; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; }
-            </style>
-          </head>
-          <body>
-            <div class="card">
-              <h2>Setup Authenticator</h2>
-              <p>Scan the QR code with your authenticator app.</p>
-              <img src="${qrCodeUrl}" alt="QR Code" />
-              <form action="/api/auth/setup-authenticator" method="POST">
-                <input type="hidden" name="userId" value="${user._id}" />
-                <input type="text" name="token" required maxlength="6" placeholder="000000" autocomplete="off" />
-                <button type="submit">Verify & Complete Setup</button>
-              </form>
-            </div>
-          </body>
-          </html>
-        `;
-        return res.send(setupHtml);
-      }
+    // Check if user has registered WebAuthn credentials
+    const { WebAuthnCredential } = require("@repo/db");
+    const hasWebAuthnCreds = await WebAuthnCredential.countDocuments({ userId: user._id });
 
-      const device = await Device.findOne({ userId: user._id, deviceId });
+    // If user has WebAuthn creds AND is not explicitly using new device flow → WebAuthn challenge
+    if (hasWebAuthnCreds > 0 && !isNewDevice) {
+      const webauthnLoginHtml = `
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+          <meta charset="UTF-8">
+          <title>Device Verification</title>
+          <style>
+            body { font-family: 'Inter', sans-serif; background: #0f172a; color: white; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
+            .card { background: #1e293b; padding: 2rem; border-radius: 8px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); width: 100%; max-width: 420px; text-align: center; }
+            button { width: 100%; padding: 0.75rem; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 1rem; }
+            .btn-primary { background: #3b82f6; }
+            .btn-secondary { background: #334155; margin-top: 0.75rem; font-size: 0.875rem; }
+            button:disabled { background: #64748b; cursor: not-allowed; }
+            .status { margin: 1rem 0; padding: 0.75rem; border-radius: 4px; }
+            .error { background: rgba(239,68,68,0.1); border: 1px solid #ef4444; color: #ef4444; }
+          </style>
+        </head>
+        <body>
+          <div class="card">
+            <h2>Verify Your Device</h2>
+            <p>Use your biometric or PIN to verify this is your registered device.</p>
+            <div id="statusBox"></div>
+            <button id="verifyBtn" class="btn-primary" onclick="startWebAuthn()">Verify with Biometric/PIN</button>
+            <form action="/api/auth/authorize" method="POST">
+              <input type="hidden" name="email" value="${email}" />
+              <input type="hidden" name="password" value="${password}" />
+              <input type="hidden" name="redirect_uri" value="${redirect_uri}" />
+              <input type="hidden" name="new_device" value="true" />
+              <button type="submit" class="btn-secondary">Use different device (OTP)</button>
+            </form>
+          </div>
+          <script>
+            const userId = '${user._id}';
+            const redirectUri = '${redirect_uri}';
+            async function startWebAuthn() {
+              const btn = document.getElementById('verifyBtn');
+              const statusBox = document.getElementById('statusBox');
+              btn.disabled = true;
+              btn.innerText = 'Waiting for device...';
+              statusBox.innerHTML = '';
+              try {
+                const optRes = await fetch('/api/auth/webauthn/login-options', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ userId })
+                });
+                const optData = await optRes.json();
+                if (!optRes.ok) throw new Error(optData.error);
+                const options = optData.options;
+                options.challenge = base64urlToBuffer(options.challenge);
+                if (options.allowCredentials) {
+                  options.allowCredentials = options.allowCredentials.map(c => ({
+                    ...c, id: base64urlToBuffer(c.id)
+                  }));
+                }
+                const assertion = await navigator.credentials.get({ publicKey: options });
+                const assertionResponse = {
+                  id: assertion.id,
+                  rawId: bufferToBase64url(assertion.rawId),
+                  type: assertion.type,
+                  response: {
+                    clientDataJSON: bufferToBase64url(assertion.response.clientDataJSON),
+                    authenticatorData: bufferToBase64url(assertion.response.authenticatorData),
+                    signature: bufferToBase64url(assertion.response.signature),
+                    userHandle: assertion.response.userHandle ? bufferToBase64url(assertion.response.userHandle) : null
+                  },
+                  clientExtensionResults: assertion.getClientExtensionResults()
+                };
+                const verRes = await fetch('/api/auth/webauthn/login', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ challengeToken: optData.challengeToken, assertionResponse, redirect_uri: redirectUri })
+                });
+                const verData = await verRes.json();
+                if (!verRes.ok) throw new Error(verData.error);
+                window.location.href = redirectUri + '?code=' + verData.code;
+              } catch (err) {
+                console.error(err);
+                statusBox.innerHTML = '<div class="status error">' + (err.message || 'Verification failed. Try OTP instead.') + '</div>';
+                btn.disabled = false;
+                btn.innerText = 'Try Again';
+              }
+            }
+            function base64urlToBuffer(b) { const s = b.replace(/-/g,'+').replace(/_/g,'/'); const p = s.length%4===0?'':'='.repeat(4-s.length%4); const bin = atob(s+p); const a = new Uint8Array(bin.length); for(let i=0;i<bin.length;i++) a[i]=bin.charCodeAt(i); return a.buffer; }
+            function bufferToBase64url(buf) { const a = new Uint8Array(buf); let b=''; for(let i=0;i<a.length;i++) b+=String.fromCharCode(a[i]); return btoa(b).replace(/\\+/g,'-').replace(/\\//g,'_').replace(/=+$/,''); }
+          </script>
+        </body>
+        </html>
+      `;
+      return res.send(webauthnLoginHtml);
+    }
 
-      let requireVerification = false;
-      if (!device) {
-        requireVerification = true;
-      } else if (device.expiresAt && device.expiresAt < new Date()) {
-        requireVerification = true;
-      }
+    // No WebAuthn creds — user must either re-register device or use temp OTP session
+    if (hasWebAuthnCreds === 0 && user.isAuthenticatorSetup && !isNewDevice) {
+      const tempDeviceId = crypto.randomBytes(16).toString('hex');
+      const reRegisterHtml = `
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+          <meta charset="UTF-8">
+          <title>Device Required</title>
+          <style>
+            body { font-family: 'Inter', sans-serif; background: #0f172a; color: white; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
+            .card { background: #1e293b; padding: 2rem; border-radius: 8px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); width: 100%; max-width: 440px; text-align: center; }
+            button { width: 100%; padding: 0.75rem; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 1rem; }
+            .btn-primary { background: #10b981; }
+            .btn-secondary { background: #334155; margin-top: 0.75rem; font-size: 0.875rem; }
+            button:disabled { background: #64748b; cursor: not-allowed; }
+            .status { margin: 1rem 0; padding: 0.75rem; border-radius: 4px; }
+            .error { background: rgba(239,68,68,0.1); border: 1px solid #ef4444; color: #ef4444; }
+            .success { background: rgba(16,185,129,0.1); border: 1px solid #10b981; color: #10b981; }
+            .info { background: rgba(59,130,246,0.1); border: 1px solid #3b82f6; color: #93c5fd; padding: 0.75rem; border-radius: 4px; margin-bottom: 1.5rem; font-size: 0.9rem; }
+          </style>
+        </head>
+        <body>
+          <div class="card">
+            <h2>No Device Registered</h2>
+            <div class="info">Your device registration was revoked or not found. Please register this device or use a temporary session.</div>
+            <div id="statusBox"></div>
+            <button id="registerBtn" class="btn-primary" onclick="startRegistration()">Register This Device (Biometric/PIN)</button>
+            <form action="/api/auth/authorize" method="POST">
+              <input type="hidden" name="email" value="${email}" />
+              <input type="hidden" name="password" value="${password}" />
+              <input type="hidden" name="redirect_uri" value="${redirect_uri}" />
+              <input type="hidden" name="new_device" value="true" />
+              <button type="submit" class="btn-secondary">Use Temporary Session (5hr OTP)</button>
+            </form>
+          </div>
+          <script>
+            const userId = '${user._id}';
+            async function startRegistration() {
+              const btn = document.getElementById('registerBtn');
+              const statusBox = document.getElementById('statusBox');
+              btn.disabled = true;
+              btn.innerText = 'Waiting for device...';
+              statusBox.innerHTML = '';
+              try {
+                const optRes = await fetch('/api/auth/webauthn/register-options', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ userId })
+                });
+                const optData = await optRes.json();
+                if (!optRes.ok) throw new Error(optData.error);
+                const options = optData.options;
+                options.challenge = base64urlToBuffer(options.challenge);
+                options.user.id = base64urlToBuffer(options.user.id);
+                if (options.excludeCredentials) {
+                  options.excludeCredentials = options.excludeCredentials.map(c => ({
+                    ...c, id: base64urlToBuffer(c.id)
+                  }));
+                }
+                const credential = await navigator.credentials.create({ publicKey: options });
+                const attestationResponse = {
+                  id: credential.id,
+                  rawId: bufferToBase64url(credential.rawId),
+                  type: credential.type,
+                  response: {
+                    clientDataJSON: bufferToBase64url(credential.response.clientDataJSON),
+                    attestationObject: bufferToBase64url(credential.response.attestationObject),
+                    transports: credential.response.getTransports ? credential.response.getTransports() : ['internal']
+                  },
+                  clientExtensionResults: credential.getClientExtensionResults()
+                };
+                const verRes = await fetch('/api/auth/webauthn/register', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ challengeToken: optData.challengeToken, attestationResponse, deviceName: navigator.userAgent })
+                });
+                const verData = await verRes.json();
+                if (!verRes.ok) throw new Error(verData.error);
+                statusBox.innerHTML = '<div class="status success">Device registered! Please login again.</div>';
+                setTimeout(() => { window.location.href = 'http://localhost'; }, 2000);
+              } catch (err) {
+                console.error(err);
+                statusBox.innerHTML = '<div class="status error">' + (err.message || 'Registration failed') + '</div>';
+                btn.disabled = false;
+                btn.innerText = 'Try Again';
+              }
+            }
+            function base64urlToBuffer(b) { const s = b.replace(/-/g,'+').replace(/_/g,'/'); const p = s.length%4===0?'':'='.repeat(4-s.length%4); const bin = atob(s+p); const a = new Uint8Array(bin.length); for(let i=0;i<bin.length;i++) a[i]=bin.charCodeAt(i); return a.buffer; }
+            function bufferToBase64url(buf) { const a = new Uint8Array(buf); let b=''; for(let i=0;i<a.length;i++) b+=String.fromCharCode(a[i]); return btoa(b).replace(/\\+/g,'-').replace(/\\//g,'_').replace(/=+$/,''); }
+          </script>
+        </body>
+        </html>
+      `;
+      return res.send(reRegisterHtml);
+    }
 
-      if (requireVerification) {
-        const verifyHtml = `
-          <!DOCTYPE html>
-          <html lang="en">
-          <head>
-            <meta charset="UTF-8">
-            <title>Verify Device</title>
-            <style>
-              body { font-family: 'Inter', sans-serif; background: #0f172a; color: white; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
-              .card { background: #1e293b; padding: 2rem; border-radius: 8px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); width: 100%; max-width: 400px; text-align: center; }
-              input { width: 100%; padding: 0.75rem; margin: 0.5rem 0 1rem; box-sizing: border-box; border-radius: 4px; border: 1px solid #334155; background: #0f172a; color: white; text-align: center; font-size: 1.5rem; letter-spacing: 0.5rem; }
-              button { width: 100%; padding: 0.75rem; background: #10b981; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; }
-              .fallback-btn { background: #334155; margin-top: 1rem; font-size: 0.875rem; }
-            </style>
-          </head>
-          <body>
-            <div class="card">
-              <h2>Verify New Device</h2>
-              <p>Enter the code from your authenticator app.</p>
-              <form action="/api/auth/verify-device-totp" method="POST">
-                <input type="hidden" name="redirect_uri" value="${redirect_uri}" />
-                <input type="hidden" name="deviceId" value="${deviceId}" />
-                <input type="hidden" name="userId" value="${user._id}" />
-                <input type="text" name="token" required maxlength="6" placeholder="000000" autocomplete="off" />
-                <button type="submit">Verify Code</button>
-              </form>
-              <form action="/api/auth/fallback-otp" method="POST">
-                <input type="hidden" name="redirect_uri" value="${redirect_uri}" />
-                <input type="hidden" name="deviceId" value="${deviceId}" />
-                <input type="hidden" name="userId" value="${user._id}" />
-                <button type="submit" class="fallback-btn">No authenticator, use email</button>
-              </form>
-            </div>
-          </body>
-          </html>
-        `;
-        return res.send(verifyHtml);
-      }
+    // Explicit new device login (OTP fallback for temp 5hr session)
+    if (isNewDevice) {
+      const tempDeviceId = crypto.randomBytes(16).toString('hex');
+      const verifyHtml = `
+        <!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>Verify Device</title>
+        <style>body{font-family:'Inter',sans-serif;background:#0f172a;color:white;display:flex;justify-content:center;align-items:center;height:100vh;margin:0}.card{background:#1e293b;padding:2rem;border-radius:8px;width:100%;max-width:400px;text-align:center}input{width:100%;padding:0.75rem;margin:0.5rem 0 1rem;box-sizing:border-box;border-radius:4px;border:1px solid #334155;background:#0f172a;color:white;text-align:center;font-size:1.5rem;letter-spacing:0.5rem}button{width:100%;padding:0.75rem;background:#10b981;color:white;border:none;border-radius:4px;cursor:pointer;font-weight:bold}.fallback-btn{background:#334155;margin-top:1rem;font-size:0.875rem}</style>
+        </head><body><div class="card"><h2>Verify New Device</h2><p>Enter the code from your authenticator app.</p>
+        <form action="/api/auth/verify-device-totp" method="POST">
+          <input type="hidden" name="redirect_uri" value="${redirect_uri}" />
+          <input type="hidden" name="deviceId" value="${tempDeviceId}" />
+          <input type="hidden" name="userId" value="${user._id}" />
+          <input type="text" name="token" required maxlength="6" placeholder="000000" autocomplete="off" />
+          <button type="submit">Verify Code</button>
+        </form>
+        <form action="/api/auth/fallback-otp" method="POST">
+          <input type="hidden" name="redirect_uri" value="${redirect_uri}" />
+          <input type="hidden" name="deviceId" value="${tempDeviceId}" />
+          <input type="hidden" name="userId" value="${user._id}" />
+          <button type="submit" class="fallback-btn">Use email OTP instead</button>
+        </form></div></body></html>`;
+      return res.send(verifyHtml);
     }
 
     // Generate Auth Code
@@ -439,23 +582,119 @@ exports.setupAuthenticator = async (req, res) => {
     user.isAuthenticatorSetup = true;
     await user.save();
 
-    res.send(`
+    // After TOTP setup, chain into WebAuthn device registration
+    const webauthnRegHtml = `
       <!DOCTYPE html>
       <html lang="en">
       <head>
-        <title>Setup Complete</title>
-        <style>body { font-family: 'Inter', sans-serif; background: #0f172a; color: white; display: flex; justify-content: center; align-items: center; height: 100vh; text-align: center; } a { color: #3b82f6; }</style>
+        <meta charset="UTF-8">
+        <title>Register Device</title>
+        <style>
+          body { font-family: 'Inter', sans-serif; background: #0f172a; color: white; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
+          .card { background: #1e293b; padding: 2rem; border-radius: 8px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); width: 100%; max-width: 420px; text-align: center; }
+          button { width: 100%; padding: 0.75rem; background: #10b981; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 1rem; }
+          button:disabled { background: #64748b; cursor: not-allowed; }
+          .status { margin: 1rem 0; padding: 0.75rem; border-radius: 4px; }
+          .error { background: rgba(239,68,68,0.1); border: 1px solid #ef4444; color: #ef4444; }
+          .success { background: rgba(16,185,129,0.1); border: 1px solid #10b981; color: #10b981; }
+          a { color: #3b82f6; text-decoration: none; }
+        </style>
       </head>
       <body>
-        <div>
-          <h2>Setup Complete!</h2>
-          <p>Your authenticator app has been verified successfully.</p>
-          <p>You have been logged out for security. Please log in again.</p>
-          <a href="http://localhost">Go to Login</a>
+        <div class="card">
+          <h2>Register This Device</h2>
+          <p>Authenticator verified! Now register this device with your biometric or PIN for future logins.</p>
+          <div id="statusBox"></div>
+          <button id="registerBtn" onclick="startRegistration()">Register Device (Biometric/PIN)</button>
+          <div id="skipLink" style="margin-top: 1rem;">
+            <a href="http://localhost">Skip & Login Later</a>
+          </div>
         </div>
+        <script>
+          const userId = '${user._id}';
+          async function startRegistration() {
+            const btn = document.getElementById('registerBtn');
+            const statusBox = document.getElementById('statusBox');
+            btn.disabled = true;
+            btn.innerText = 'Waiting for device...';
+            statusBox.innerHTML = '';
+            try {
+              // 1. Get registration options
+              const optRes = await fetch('/api/auth/webauthn/register-options', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ userId })
+              });
+              const optData = await optRes.json();
+              if (!optRes.ok) throw new Error(optData.error);
+
+              const options = optData.options;
+              // Convert base64url to ArrayBuffer
+              options.challenge = base64urlToBuffer(options.challenge);
+              options.user.id = base64urlToBuffer(options.user.id);
+              if (options.excludeCredentials) {
+                options.excludeCredentials = options.excludeCredentials.map(c => ({
+                  ...c, id: base64urlToBuffer(c.id)
+                }));
+              }
+
+              // 2. Create credential via browser API
+              const credential = await navigator.credentials.create({ publicKey: options });
+
+              // 3. Send attestation to server
+              const attestationResponse = {
+                id: credential.id,
+                rawId: bufferToBase64url(credential.rawId),
+                type: credential.type,
+                response: {
+                  clientDataJSON: bufferToBase64url(credential.response.clientDataJSON),
+                  attestationObject: bufferToBase64url(credential.response.attestationObject),
+                  transports: credential.response.getTransports ? credential.response.getTransports() : ['internal']
+                },
+                clientExtensionResults: credential.getClientExtensionResults()
+              };
+
+              const verRes = await fetch('/api/auth/webauthn/register', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  challengeToken: optData.challengeToken,
+                  attestationResponse,
+                  deviceName: navigator.userAgent
+                })
+              });
+              const verData = await verRes.json();
+              if (!verRes.ok) throw new Error(verData.error);
+
+              statusBox.innerHTML = '<div class="status success">Device registered! Redirecting to login...</div>';
+              document.getElementById('skipLink').innerHTML = '';
+              setTimeout(() => { window.location.href = 'http://localhost'; }, 2000);
+            } catch (err) {
+              console.error(err);
+              statusBox.innerHTML = '<div class="status error">' + (err.message || 'Registration failed') + '</div>';
+              btn.disabled = false;
+              btn.innerText = 'Try Again';
+            }
+          }
+          function base64urlToBuffer(base64url) {
+            const base64 = base64url.replace(/-/g, '+').replace(/_/g, '/');
+            const pad = base64.length % 4 === 0 ? '' : '='.repeat(4 - (base64.length % 4));
+            const binary = atob(base64 + pad);
+            const bytes = new Uint8Array(binary.length);
+            for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+            return bytes.buffer;
+          }
+          function bufferToBase64url(buffer) {
+            const bytes = new Uint8Array(buffer);
+            let binary = '';
+            for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+            return btoa(binary).replace(/\\+/g, '-').replace(/\\//g, '_').replace(/=+$/, '');
+          }
+        </script>
       </body>
       </html>
-    `);
+    `;
+    res.send(webauthnRegHtml);
   } catch (err) {
     console.error(err);
     renderError(res, "Internal server error.");
@@ -721,7 +960,7 @@ exports.refresh = async (req, res) => {
 
 exports.verify = async (req, res) => {
   try {
-    const { token, requiredPermissions } = req.body;
+    const { token, requiredPermissions, signature, timestamp, method, url, bodyHash } = req.body;
 
     if (!token) {
       return res.status(400).json({ authorized: false, error: "Token is required" });
@@ -743,72 +982,53 @@ exports.verify = async (req, res) => {
       return res.status(403).json({ authorized: false, error: "User is blocked or disabled" });
     }
 
-    if (user.role === "superadmin") {
-      return res.json({
-        authorized: true,
-        user: { userId: user._id, role: user.role }
-      });
-    }
-
-    // --- ZERO-TRUST DEVICE VERIFICATION ---
-    const { deviceId } = req.body;
-
-    if (!deviceId) {
-      return res.status(403).json({ authorized: false, error: 'Device ID required', code: 'DEVICE_UNRECOGNIZED' });
-    }
-
-    // 1. Clean up expired devices for this user
-    await Device.deleteMany({ userId: decoded.userId, expiresAt: { $lt: new Date() } });
-
-    // 2. Check if device exists
-    const device = await Device.findOne({ userId: decoded.userId, deviceId });
-
-    if (!device) {
-      const existingDevices = await Device.countDocuments({ userId: decoded.userId });
-      if (existingDevices === 0) {
-        return res.status(403).json({ authorized: false, error: 'Device unrecognized', code: 'DEVICE_UNRECOGNIZED', isFirstLogin: true });
+    // --- ZERO-TRUST: CRYPTOGRAPHIC REQUEST SIGNATURE VERIFICATION ---
+    if (signature && timestamp) {
+      const { verifyRequestSignature } = require("./webauthn");
+      const result = await verifyRequestSignature(decoded.userId, signature, timestamp, method, url, bodyHash);
+      if (!result.valid) {
+        return res.status(403).json({
+          authorized: false,
+          error: 'Invalid request signature',
+          code: result.code || 'SIGNATURE_INVALID'
+        });
       }
-      return res.status(403).json({ authorized: false, error: 'Device unrecognized', code: 'DEVICE_UNRECOGNIZED' });
+    } else {
+      // No signature — check if this is a temp device session (OTP flow)
+      const { deviceId } = req.body;
+      if (deviceId) {
+        await Device.deleteMany({ userId: decoded.userId, expiresAt: { $lt: new Date() } });
+        const device = await Device.findOne({ userId: decoded.userId, deviceId });
+        if (!device || (device.expiresAt && device.expiresAt < new Date())) {
+          return res.status(403).json({ authorized: false, error: 'No valid session', code: 'SESSION_KEY_REQUIRED' });
+        }
+      } else {
+        return res.status(403).json({ authorized: false, error: 'Request signature required', code: 'SESSION_KEY_REQUIRED' });
+      }
     }
 
-    // It exists. Is it expired?
-    if (device.expiresAt && device.expiresAt < new Date()) {
-      return res.status(403).json({ authorized: false, error: 'Device expired', code: 'DEVICE_EXPIRED' });
-    }
-    // --- END ZERO-TRUST DEVICE VERIFICATION ---
-
-
+    // RBAC permission check
     const roleData = await Role.findOne({ name: user.role });
     const userPerms = roleData ? roleData.permissions : [];
 
-    if (userPerms.includes("Z_ALL")) {
+    if (user.role === "superadmin" || userPerms.includes("Z_ALL")) {
       return res.json({ authorized: true, user: { userId: user._id, role: user.role } });
     }
 
     if (requiredPermissions && Array.isArray(requiredPermissions) && requiredPermissions.length > 0) {
       const hasAccess = requiredPermissions.every(rp => userPerms.includes(rp));
-
       if (!hasAccess) {
         user.riskScore += 10;
-        if (user.riskScore > 90) {
-          user.isBlocked = true;
-        }
+        if (user.riskScore > 90) user.isBlocked = true;
         await user.save();
-
-        let message = "Insufficient permissions.";
-        if (user.isBlocked) {
-          message = "You are blocked due to repeated failed attempts. Please contact admin.";
-        }
-
+        const message = user.isBlocked
+          ? "You are blocked due to repeated failed attempts. Please contact admin."
+          : "Insufficient permissions.";
         return res.status(403).json({ authorized: false, error: message });
       }
     }
 
-    return res.json({
-      authorized: true,
-      user: { userId: user._id, role: user.role }
-    });
-
+    return res.json({ authorized: true, user: { userId: user._id, role: user.role } });
   } catch (error) {
     console.error("Centralized Verify error:", error);
     res.status(500).json({ authorized: false, error: "Internal server error" });

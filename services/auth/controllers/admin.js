@@ -1,4 +1,4 @@
-const { User, AuditLog, Role, Permission, ApiMapping } = require('@repo/db');
+const { User, AuditLog, Role, Permission, ApiMapping, WebAuthnCredential, SessionKey } = require('@repo/db');
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 
@@ -296,4 +296,59 @@ exports.getApiMappings = async (req, res) => {
   }
 };
 
+// ------------------------
+// Device Management (WebAuthn)
+// ------------------------
 
+// List all WebAuthn devices for a user
+exports.getUserDevices = async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const user = await User.findById(userId);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+
+    const devices = await WebAuthnCredential.find({ userId }, '-publicKey');
+    res.json({ devices });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// Revoke (delete) a specific WebAuthn device
+exports.revokeDevice = async (req, res) => {
+  try {
+    const { credentialId } = req.params;
+    const credential = await WebAuthnCredential.findById(credentialId);
+    if (!credential) return res.status(404).json({ error: 'Device credential not found' });
+
+    const userId = credential.userId;
+
+    // Delete the credential
+    await WebAuthnCredential.findByIdAndDelete(credentialId);
+
+    // Also invalidate all session keys for this user (force re-auth)
+    await SessionKey.deleteMany({ userId });
+
+    res.json({ message: 'Device revoked. User will need to re-register or use OTP on next login.' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// Revoke ALL devices for a user
+exports.revokeAllDevices = async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const user = await User.findById(userId);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+
+    const deletedCount = await WebAuthnCredential.deleteMany({ userId });
+    await SessionKey.deleteMany({ userId });
+
+    res.json({
+      message: `All devices revoked (${deletedCount.deletedCount} credentials removed). User must re-register on next login.`
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};

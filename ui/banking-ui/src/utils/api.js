@@ -1,15 +1,5 @@
 import axios from 'axios';
-import fpPromise from '@fingerprintjs/fingerprintjs';
-
-function getCookie(name) {
-  const value = `; ${document.cookie}`;
-  const parts = value.split(`; ${name}=`);
-  if (parts.length === 2) return parts.pop().split(';').shift();
-  return null;
-}
-
-let fpPromiseCache = fpPromise.load();
-let deviceId = getCookie('deviceId');
+import { signRequest, generateSessionKeyPair, hasSessionKey } from './crypto';
 
 const BANKING_URL = import.meta.env.VITE_BANKING_URL || '/api/banking';
 const AUTH_URL = import.meta.env.VITE_AUTH_URL || '/api';
@@ -23,46 +13,45 @@ const api = axios.create({
 });
 
 // ── Request Interceptor ─────────────────────────────────────────────────────
-// Attach accessToken from localStorage as Authorization header before every request
+// Attach JWT + cryptographic request signature before every request
 api.interceptors.request.use(
   async (config) => {
     const token = localStorage.getItem('accessToken');
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }
-    let storedDeviceId = getCookie('deviceId') || deviceId;
-    
-    if (!storedDeviceId) {
-      try {
-        const fp = await fpPromiseCache;
-        const result = await fp.get();
-        storedDeviceId = result.visitorId;
-        deviceId = storedDeviceId;
-        document.cookie = `deviceId=${storedDeviceId}; path=/; max-age=31536000`;
-      } catch (e) {
-        console.error("Fingerprint error", e);
+
+    // Sign the request with the in-memory session key
+    if (hasSessionKey()) {
+      // Build full URL path to match what the server sees in req.originalUrl
+      const base = (config.baseURL || '').replace(/\/$/, '');
+      const path = config.url || '';
+      const fullUrl = path.startsWith('/') ? base + path : base + '/' + path;
+      const method = (config.method || 'GET').toUpperCase();
+      const body = config.data || null;
+
+      const sig = await signRequest(method, fullUrl, body);
+      if (sig) {
+        config.headers['X-Signature'] = sig.signature;
+        config.headers['X-Timestamp'] = sig.timestamp;
       }
     }
 
-    if (storedDeviceId) {
-      config.headers['X-Device-Id'] = storedDeviceId;
-    }
     return config;
   },
   (error) => Promise.reject(error)
 );
 
 // ── Response Interceptor ────────────────────────────────────────────────────
-// Unwrap response data; on 401 try to refresh the token once, then retry
 api.interceptors.response.use(
   (response) => response.data,
   async (error) => {
     const originalRequest = error.config;
 
+    // Handle 401 — try to refresh the token
     if (error.response?.status === 401 && !originalRequest._retry) {
       originalRequest._retry = true;
       try {
-        // refreshToken is stored in an HttpOnly cookie; withCredentials sends it automatically
         const refreshRes = await axios.post(
           `${AUTH_URL}/auth/refresh`,
           {},
@@ -75,10 +64,8 @@ api.interceptors.response.use(
           originalRequest.headers.Authorization = `Bearer ${newAccessToken}`;
         }
 
-        // Retry original request — response.data is unwrapped by the success handler
         return await api(originalRequest);
       } catch (refreshError) {
-        // Refresh failed — clear local auth and redirect to login
         localStorage.removeItem('accessToken');
         localStorage.removeItem('userInfo');
         window.location.href = '/login';
@@ -86,13 +73,13 @@ api.interceptors.response.use(
       }
     }
 
+    // Handle 403 — session key required means page was refreshed
     if (error.response?.status === 403) {
-      if (error.response.data?.code === 'DEVICE_UNRECOGNIZED' || error.response.data?.code === 'DEVICE_EXPIRED') {
-        const event = new CustomEvent('device_unrecognized', {
-          detail: { 
-            isFirstLogin: error.response.data?.isFirstLogin,
-            code: error.response.data?.code
-          }
+      const code = error.response.data?.code;
+      if (code === 'SESSION_KEY_REQUIRED' || code === 'SIGNATURE_INVALID' || code === 'TIMESTAMP_EXPIRED') {
+        // Session key is gone (page refresh) — user must re-authenticate
+        const event = new CustomEvent('session-expired', {
+          detail: 'Your session key has expired. Please login again.'
         });
         window.dispatchEvent(event);
       } else {
@@ -107,8 +94,26 @@ api.interceptors.response.use(
   }
 );
 
+// ── Session Key Initialization ──────────────────────────────────────────────
+// Call this after successful login to generate and register the session key
+export async function initializeSessionKey() {
+  const publicKeyJWK = await generateSessionKeyPair();
+
+  // Send the public key to the server
+  const token = localStorage.getItem('accessToken');
+  await axios.post(
+    `${AUTH_URL}/auth/session-key`,
+    { publicKeyJWK },
+    {
+      headers: { Authorization: `Bearer ${token}` },
+      withCredentials: true
+    }
+  );
+
+  return true;
+}
+
 // ── apiCall helper ──────────────────────────────────────────────────────────
-// Thin wrapper that accepts fetch-style options for backward compatibility
 export async function apiCall(endpoint, options = {}) {
   const axiosOptions = {
     url: endpoint,

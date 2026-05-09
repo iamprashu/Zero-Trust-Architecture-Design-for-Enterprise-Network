@@ -3,7 +3,6 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { useAuth } from './context/AuthContext';
 
 import AdminLayout from './layouts/AdminLayout';
-import DeviceOtpModal from './components/DeviceOtpModal';
 
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
@@ -28,7 +27,6 @@ const ProtectedRoute = ({ children }) => {
 function App() {
   return (
     <>
-      <DeviceOtpModal />
       <BrowserRouter basename="/admin">
       <Routes>
         <Route path="/login" element={<Login />} />

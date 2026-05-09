@@ -1,3 +1,5 @@
+const crypto = require('crypto');
+
 const authVerificationUrl = process.env.AUTH_VERIFY_URL || 'http://localhost:5000/api/auth/verify';
 
 exports.authorize = (requiredPermissions = []) => {
@@ -9,19 +11,44 @@ exports.authorize = (requiredPermissions = []) => {
       }
 
       const token = authHeader.split(' ')[1];
-      const deviceId = req.headers['x-device-id'];
+
+      // Extract signature headers for cryptographic request verification
+      const signature = req.headers['x-signature'];
+      const timestamp = req.headers['x-timestamp'];
+
+      // Compute body hash for signature verification
+      // Match frontend: empty/no body → hash of '', otherwise hash of JSON.stringify(body)
+      const hasBody = req.body && Object.keys(req.body).length > 0;
+      const bodyStr = hasBody ? JSON.stringify(req.body) : '';
+      const bodyHash = crypto.createHash('sha256').update(bodyStr).digest('hex');
+
+      // Build verification payload
+      const verifyBody = {
+        token,
+        requiredPermissions,
+        signature: signature || undefined,
+        timestamp: timestamp || undefined,
+        method: req.method,
+        url: req.originalUrl || req.url,
+        bodyHash
+      };
 
       // Call Centralized Auth Service
       const response = await fetch(authVerificationUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token, requiredPermissions, deviceId })
+        body: JSON.stringify(verifyBody)
       });
 
       const data = await response.json();
 
       if (!response.ok || !data.authorized) {
-        return res.status(v(response.status, 403)).json({ error: data.error || 'Unauthorized', code: data.code, isFirstLogin: data.isFirstLogin });
+        const status = (response.status >= 400 && response.status < 600) ? response.status : 403;
+        return res.status(status).json({
+          error: data.error || 'Unauthorized',
+          code: data.code,
+          isFirstLogin: data.isFirstLogin
+        });
       }
 
       // Populate req.user just in case it is needed by downstream handlers
@@ -33,7 +60,3 @@ exports.authorize = (requiredPermissions = []) => {
     }
   };
 };
-
-function v(status, fallback) {
-  return (status >= 400 && status < 600) ? status : fallback;
-}
