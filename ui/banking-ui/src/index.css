@@ -25,7 +25,7 @@ body {
   min-height: 100vh;
 }
 
-.glass-card {
+.glass-card, .card {
   background: var(--bg-card);
   backdrop-filter: var(--glass-backdrop);
   -webkit-backdrop-filter: var(--glass-backdrop);
@@ -36,7 +36,7 @@ body {
   transition: transform 0.3s ease, box-shadow 0.3s ease;
 }
 
-.glass-card:hover {
+.glass-card:hover, .card:hover {
   transform: translateY(-2px);
   box-shadow: 0 12px 40px 0 rgba(0, 0, 0, 0.45);
 }
@@ -76,7 +76,7 @@ body {
   background: rgba(255, 255, 255, 0.05);
 }
 
-.input-glass {
+.input-glass, input, select {
   width: 100%;
   background: rgba(15, 23, 42, 0.6);
   border: 1px solid var(--border);
@@ -89,7 +89,7 @@ body {
   outline: none;
 }
 
-.input-glass:focus {
+.input-glass:focus, input:focus, select:focus {
   border-color: var(--primary);
   box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.2);
 }
@@ -117,18 +117,18 @@ body {
   border-left: 3px solid var(--primary);
 }
 
-.table-glass {
+.table-glass, table {
   width: 100%;
   border-collapse: collapse;
 }
 
-.table-glass th, .table-glass td {
+.table-glass th, .table-glass td, table th, table td {
   padding: 16px;
   text-align: left;
   border-bottom: 1px solid var(--border);
 }
 
-.table-glass th {
+.table-glass th, table th {
   color: var(--text-muted);
   font-weight: 600;
   font-size: 0.85rem;
@@ -136,11 +136,11 @@ body {
   letter-spacing: 0.05em;
 }
 
-.table-glass tr {
+.table-glass tr, table tr {
   transition: background-color 0.2s;
 }
 
-.table-glass tbody tr:hover {
+.table-glass tbody tr:hover, table tbody tr:hover {
   background-color: rgba(255, 255, 255, 0.02);
 }
 

@@ -1,8 +1,15 @@
 import axios from 'axios';
 import fpPromise from '@fingerprintjs/fingerprintjs';
 
+function getCookie(name) {
+  const value = `; ${document.cookie}`;
+  const parts = value.split(`; ${name}=`);
+  if (parts.length === 2) return parts.pop().split(';').shift();
+  return null;
+}
+
 let fpPromiseCache = fpPromise.load();
-let deviceId = localStorage.getItem('deviceId');
+let deviceId = getCookie('deviceId');
 
 const AUTH_BASE = import.meta.env.VITE_AUTH_URL || 'http://localhost:5000';
 
@@ -13,7 +20,7 @@ const api = axios.create({
 
 // Request Interceptor to add Device ID
 api.interceptors.request.use(async (config) => {
-  let storedDeviceId = localStorage.getItem('deviceId') || deviceId;
+  let storedDeviceId = getCookie('deviceId') || deviceId;
   
   if (!storedDeviceId) {
     try {
@@ -21,7 +28,7 @@ api.interceptors.request.use(async (config) => {
       const result = await fp.get();
       storedDeviceId = result.visitorId;
       deviceId = storedDeviceId;
-      localStorage.setItem('deviceId', storedDeviceId);
+      document.cookie = `deviceId=${storedDeviceId}; path=/; max-age=31536000`;
     } catch (e) {
       console.error("Fingerprint error", e);
     }

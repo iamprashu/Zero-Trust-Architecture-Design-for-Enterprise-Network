@@ -133,7 +133,6 @@ const UsersPage = () => {
                 <td>
                   <select 
                     className="form-control" 
-                    style={{ padding: '0.4rem', border: '1px solid var(--border)', background: 'var(--bg-main)', color: 'white', borderRadius: '4px', maxWidth: '140px' }}
                     value={u.role}
                     onChange={(e) => handleRoleChange(u._id, e.target.value)}
                     disabled={u.role === 'superadmin'}

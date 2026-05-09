@@ -5,8 +5,7 @@ const REDIRECT_URI = import.meta.env.VITE_REDIRECT_URI || 'http://localhost:5002
 
 export default function Login() {
   const handleLogin = () => {
-    const deviceId = localStorage.getItem('deviceId') || '';
-    window.location.href = `${AUTH_URL}/api/login?redirect_uri=${encodeURIComponent(REDIRECT_URI)}&device_id=${encodeURIComponent(deviceId)}`
+    window.location.href = `${AUTH_URL}/api/login?redirect_uri=${encodeURIComponent(REDIRECT_URI)}`
   }
 
   return (
