@@ -3,6 +3,7 @@ packages:
   - services/*
   - gateway/*
   - packages/*
+  - ui/*
 allowBuilds:
   '@prisma/engines': false
   esbuild: false
