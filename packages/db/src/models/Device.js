@@ -22,6 +22,12 @@ const deviceSchema = new mongoose.Schema({
   expiresAt: {
     type: Date,
     default: null
+  },
+  // Salted SHA-256 hash of the User-Agent at device creation time.
+  // Compared on every verify call to detect deviceId theft / replay from a different machine.
+  deviceFingerprint: {
+    type: String,
+    default: null
   }
 }, {
   timestamps: true

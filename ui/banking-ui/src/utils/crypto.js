@@ -1,43 +1,111 @@
 // ── Session Key Management ──────────────────────────────────────────────────
-// Generates an ephemeral ECDSA P-256 key pair in memory.
-// The private key is NEVER persisted — it dies on page refresh.
+// Generates an ECDSA P-256 key pair.
+// The private key is non-extractable and stored in IndexedDB to survive page reloads.
+// Because it is non-extractable, it cannot be stolen/copied to another device.
 // The public key is sent to the server for signature verification.
 
-let sessionKeyPair = null; // { privateKey: CryptoKey, publicKeyJWK: object }
+let inMemorySessionKeyPair = null; // { privateKey: CryptoKey, publicKeyJWK: object }
+
+// ── IndexedDB Wrapper ───────────────────────────────────────────────────────
+const DB_NAME = 'ZeroTrustSecurityDB';
+const STORE_NAME = 'sessionKeys';
+
+function getDB() {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(DB_NAME, 1);
+    request.onupgradeneeded = (e) => {
+      e.target.result.createObjectStore(STORE_NAME);
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function saveKeyToDB(keyObj) {
+  const db = await getDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, 'readwrite');
+    tx.objectStore(STORE_NAME).put(keyObj, 'currentSessionKey');
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+async function loadKeyFromDB() {
+  const db = await getDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, 'readonly');
+    const request = tx.objectStore(STORE_NAME).get('currentSessionKey');
+    request.onsuccess = () => resolve(request.result || null);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function deleteKeyFromDB() {
+  const db = await getDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, 'readwrite');
+    tx.objectStore(STORE_NAME).delete('currentSessionKey');
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+/**
+ * Restore the session key pair from IndexedDB (e.g., on page load).
+ */
+export async function restoreSessionKey() {
+  try {
+    const stored = await loadKeyFromDB();
+    if (stored && stored.privateKey && stored.publicKeyJWK) {
+      inMemorySessionKeyPair = stored;
+      return true;
+    }
+  } catch (e) {
+    console.warn("Failed to restore session key from DB", e);
+  }
+  return false;
+}
 
 /**
  * Generate a new session key pair and return the public key in JWK format.
- * The private key is stored in module-level memory only.
  */
 export async function generateSessionKeyPair() {
   const keyPair = await crypto.subtle.generateKey(
     { name: 'ECDSA', namedCurve: 'P-256' },
-    false, // private key NOT extractable
+    false, // CRITICAL: private key NOT extractable (cannot be stolen)
     ['sign', 'verify']
   );
 
   const publicKeyJWK = await crypto.subtle.exportKey('jwk', keyPair.publicKey);
 
-  sessionKeyPair = {
+  const keyObj = {
     privateKey: keyPair.privateKey,
     publicKeyJWK
   };
+
+  inMemorySessionKeyPair = keyObj;
+  
+  // Persist to IndexedDB so it survives page reloads
+  await saveKeyToDB(keyObj);
 
   return publicKeyJWK;
 }
 
 /**
- * Sign a request payload using the in-memory private key.
+ * Sign a request payload using the private key.
  * Returns { signature, timestamp } to be sent as headers.
- * Returns null if no session key exists (page was refreshed).
  */
 export async function signRequest(method, url, body) {
-  if (!sessionKeyPair) return null;
+  if (!inMemorySessionKeyPair) return null;
 
   const timestamp = Date.now().toString();
 
   // Hash the body
-  const bodyStr = body ? JSON.stringify(body) : '';
+  let bodyStr = '';
+  if (body) {
+    bodyStr = typeof body === 'string' ? body : JSON.stringify(body);
+  }
   const bodyBytes = new TextEncoder().encode(bodyStr);
   const hashBuffer = await crypto.subtle.digest('SHA-256', bodyBytes);
   const hashArray = Array.from(new Uint8Array(hashBuffer));
@@ -50,7 +118,7 @@ export async function signRequest(method, url, body) {
   // Sign with ECDSA P-256
   const signatureBuffer = await crypto.subtle.sign(
     { name: 'ECDSA', hash: 'SHA-256' },
-    sessionKeyPair.privateKey,
+    inMemorySessionKeyPair.privateKey,
     payloadBytes
   );
 
@@ -66,15 +134,16 @@ export async function signRequest(method, url, body) {
 }
 
 /**
- * Check if a session key pair exists in memory.
+ * Check if a session key pair is available.
  */
 export function hasSessionKey() {
-  return sessionKeyPair !== null;
+  return inMemorySessionKeyPair !== null;
 }
 
 /**
  * Clear the session key pair (e.g., on logout).
  */
-export function clearSessionKey() {
-  sessionKeyPair = null;
+export async function clearSessionKey() {
+  inMemorySessionKeyPair = null;
+  await deleteKeyFromDB();
 }

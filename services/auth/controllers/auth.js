@@ -1,6 +1,6 @@
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
-const { User, AuditLog, Role, Permission, AuthCode, RefreshToken, Device } = require("@repo/db");
+const { User, AuditLog, Role, Permission, AuthCode, RefreshToken, Device, SessionKey } = require("@repo/db");
 const crypto = require("crypto");
 const qrcode = require("qrcode");
 const { authenticator } = require("otplib");
@@ -9,6 +9,40 @@ const { encrypt, decrypt } = require("../utils/encryption");
 const getJwtSecret = () => process.env.JWT_SECRET || "default_secret";
 const getRefreshSecret = () =>
   process.env.REFRESH_SECRET || "default_refresh_secret";
+
+// ── Security Helpers ──────────────────────────────────────────────────────────
+
+/**
+ * Compute a salted SHA-256 hash of the User-Agent string.
+ * Used to bind OTP temp-device sessions to the browser/machine that created them.
+ * The salt prevents pre-computation attacks.
+ */
+const FINGERPRINT_SALT = process.env.FINGERPRINT_SALT || 'zt_fp_default_salt_change_in_prod';
+function computeFingerprint(userAgent) {
+  return crypto
+    .createHash('sha256')
+    .update(FINGERPRINT_SALT + (userAgent || ''))
+    .digest('hex');
+}
+
+/**
+ * Nuclear option: revoke ALL sessions for a user and set security lockout.
+ * Called after 3 consecutive OTP device fingerprint mismatches.
+ * NOTE: authenticatorSecret and isAuthenticatorSetup are NEVER touched here.
+ * The user's TOTP app on their phone remains valid for use after admin unlock.
+ */
+async function revokeAllAndLockout(user) {
+  user.refreshToken = null;
+  user.securityLockout = true;
+  user.securityIncidentCount = 0; // reset counter — lockout flag is now the gate
+  await user.save();
+  // Kill all active TPM sessions (ephemeral keys)
+  await SessionKey.deleteMany({ userId: user._id });
+  // Kill all OTP device sessions
+  await Device.deleteMany({ userId: user._id });
+  // Log the incident for admin audit trail
+  await AuditLog.create({ userId: user._id, action: 'security_incident' });
+}
 
 exports.login = async (req, res) => {
   try {
@@ -276,9 +310,25 @@ exports.authorize = async (req, res) => {
     }
 
     const user = await User.findOne({ email });
-    if (!user || user.isBlocked || user.disabled || user.deleted) {
+    if (!user) {
       return renderError(res, "Invalid credentials or account blocked/disabled.");
     }
+
+    // Check blocked/disabled/deleted status
+    if (user.isBlocked || user.disabled || user.deleted) {
+      return renderError(res, "Invalid credentials or account blocked/disabled.");
+    }
+
+    // Check security lockout — blocked before any further processing
+    if (user.securityLockout) {
+      return renderError(
+        res,
+        'Your account has been security-locked due to suspicious activity detected on your session. ' +
+        'This protects your account from unauthorized access. ' +
+        'Please contact your system administrator to unlock your account before logging in again.'
+      );
+    }
+
 
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) {
@@ -707,6 +757,10 @@ exports.verifyDeviceTotp = async (req, res) => {
     const user = await User.findById(userId);
     if (!user) return renderError(res, "User not found.");
 
+    if (user.securityLockout) {
+      return renderError(res, 'Your account is security-locked. Contact your administrator.');
+    }
+
     const isValid = authenticator.verify({ token, secret: user.authenticatorSecret });
     if (!isValid) {
       user.riskScore += 10;
@@ -714,13 +768,14 @@ exports.verifyDeviceTotp = async (req, res) => {
       return renderError(res, "Invalid authenticator code. Risk score increased.");
     }
 
-    // Create 5-hour session device
+    // Create 5-hour session device — bind fingerprint at creation time
     const device = new Device({
       userId,
       deviceId,
       deviceName: req.headers['user-agent'] || 'Unknown Device',
       isTrusted: false,
       expiresAt: new Date(Date.now() + 5 * 3600000), // 5 hours
+      deviceFingerprint: computeFingerprint(req.headers['user-agent']), // bind UA at creation
     });
     await device.save();
 
@@ -795,6 +850,13 @@ exports.authorizeOtp = async (req, res) => {
       return renderError(res, "Missing parameters for OTP verification.");
     }
 
+    // Check security lockout before allowing OTP verification
+    const user = await User.findById(userId);
+    if (!user) return renderError(res, 'User not found.');
+    if (user.securityLockout) {
+      return renderError(res, 'Your account is security-locked. Contact your administrator.');
+    }
+
     const axios = require('axios');
     try {
       await axios.post(`${process.env.DEVICE_SERVICE_URL || 'http://localhost:3005'}/api/devices/otp/verify`, {
@@ -807,6 +869,23 @@ exports.authorizeOtp = async (req, res) => {
         await user.save();
       }
       return renderError(res, "Invalid or expired OTP. Risk score increased.");
+    }
+
+    // OTP verified — create the temp device record with fingerprint bound to this machine
+    try {
+      const existingDevice = await Device.findOne({ deviceId });
+      if (!existingDevice) {
+        await Device.create({
+          userId,
+          deviceId,
+          deviceName: req.headers['user-agent'] || 'Unknown Device',
+          isTrusted: false,
+          expiresAt: new Date(Date.now() + 5 * 3600000), // 5 hours
+          deviceFingerprint: computeFingerprint(req.headers['user-agent']), // bind UA
+        });
+      }
+    } catch (devErr) {
+      console.error('Failed to create device record after OTP verify:', devErr.message);
     }
 
     const code = crypto.randomBytes(16).toString('hex');
@@ -842,15 +921,31 @@ exports.token = async (req, res) => {
     // Remove code so it cannot be reused
     await AuthCode.deleteOne({ _id: authCode._id });
 
+    // Determine if this is an OTP/temp session by checking for a live Device record
+    // OTP sessions get sessionType + sessionExpiry embedded in the JWT for server-side cap enforcement
+    const otpDevice = await Device.findOne({
+      userId: user._id,
+      isTrusted: false,
+      expiresAt: { $gt: new Date() }
+    });
+
+    // Build JWT payload — embed OTP session metadata if applicable
+    const tokenPayload = { userId: user._id, role: user.role };
+    if (otpDevice) {
+      tokenPayload.sessionType = 'otp';                          // signals OTP path to all verifiers
+      tokenPayload.sessionExpiry = otpDevice.expiresAt.getTime(); // hard 5hr cap enforced in verify
+      tokenPayload.deviceId = otpDevice.deviceId;                // ties JWT to the specific device record
+    }
+
     // Generate Tokens
     const accessToken = jwt.sign(
-      { userId: user._id, role: user.role },
+      tokenPayload,
       getJwtSecret(),
-      { expiresIn: "15m" }
+      { expiresIn: otpDevice ? '5h' : '15m' } // OTP sessions get a 5hr access token
     );
 
     const refreshTokenPlain = jwt.sign({ userId: user._id }, getRefreshSecret(), {
-      expiresIn: "7d",
+      expiresIn: otpDevice ? '5h' : '7d', // OTP sessions get no long-lived refresh token
     });
 
     user.refreshToken = encrypt(refreshTokenPlain);
@@ -860,7 +955,9 @@ exports.token = async (req, res) => {
     res.cookie("refreshToken", refreshTokenPlain, {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
-      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+      maxAge: otpDevice
+        ? 5 * 60 * 60 * 1000          // 5 hours for OTP sessions
+        : 7 * 24 * 60 * 60 * 1000,   // 7 days for TPM sessions
       sameSite: "lax",
       path: "/"
     });
@@ -868,7 +965,7 @@ exports.token = async (req, res) => {
     return res.json({
       accessToken,
       token_type: "Bearer",
-      expires_in: 900 // 15 mins
+      expires_in: otpDevice ? 18000 : 900 // 5hr (18000s) or 15min (900s)
     });
 
   } catch (error) {
@@ -897,6 +994,16 @@ exports.refresh = async (req, res) => {
       return res.status(401).json({ error: "User invalid or blocked" });
     }
 
+    // Security lockout check — locked users cannot refresh tokens
+    if (user.securityLockout) {
+      res.clearCookie('refreshToken');
+      res.clearCookie('accessToken');
+      return res.status(403).json({
+        error: 'Account security-locked. Contact your administrator.',
+        code: 'SECURITY_LOCKOUT'
+      });
+    }
+
     if (!user.refreshToken) {
       return res.status(401).json({ error: "No refresh token found for user" });
     }
@@ -909,10 +1016,24 @@ exports.refresh = async (req, res) => {
       return res.status(401).json({ error: "Refresh token mismatch. Access revoked." });
     }
 
+    // Check if this is an OTP session by looking for an active device record
+    const otpDevice = await Device.findOne({
+      userId: user._id,
+      isTrusted: false,
+      expiresAt: { $gt: new Date() }
+    });
+
+    const tokenPayload = { userId: user._id, role: user.role };
+    if (otpDevice) {
+      tokenPayload.sessionType = 'otp';
+      tokenPayload.sessionExpiry = otpDevice.expiresAt.getTime();
+      tokenPayload.deviceId = otpDevice.deviceId;
+    }
+
     const accessToken = jwt.sign(
-      { userId: user._id, role: user.role },
+      tokenPayload,
       getJwtSecret(),
-      { expiresIn: "15m" }
+      { expiresIn: otpDevice ? "5h" : "15m" }
     );
 
     console.log("Refresh Done new access token is :", accessToken);
@@ -982,6 +1103,15 @@ exports.verify = async (req, res) => {
       return res.status(403).json({ authorized: false, error: "User is blocked or disabled" });
     }
 
+    // Security lockout: hard block regardless of path (TPM or OTP)
+    if (user.securityLockout) {
+      return res.status(403).json({
+        authorized: false,
+        error: 'Account security-locked. Contact your administrator.',
+        code: 'SECURITY_LOCKOUT'
+      });
+    }
+
     // --- ZERO-TRUST: CRYPTOGRAPHIC REQUEST SIGNATURE VERIFICATION ---
     if (signature && timestamp) {
       const { verifyRequestSignature } = require("./webauthn");
@@ -994,14 +1124,66 @@ exports.verify = async (req, res) => {
         });
       }
     } else {
-      // No signature — check if this is a temp device session (OTP flow)
-      const { deviceId } = req.body;
+      // No ECDSA signature — must be an OTP device session
+      const { deviceId, userAgent } = req.body;
       if (deviceId) {
+        // Clean up expired devices first
         await Device.deleteMany({ userId: decoded.userId, expiresAt: { $lt: new Date() } });
         const device = await Device.findOne({ userId: decoded.userId, deviceId });
+
         if (!device || (device.expiresAt && device.expiresAt < new Date())) {
           return res.status(403).json({ authorized: false, error: 'No valid session', code: 'SESSION_KEY_REQUIRED' });
         }
+
+        // ── OTP 5-hour hard cap (JWT-level) ──────────────────────────────────
+        // The sessionExpiry is baked into the JWT at token exchange time.
+        // This is the authoritative cap — even if Device.expiresAt was modified in DB.
+        if (decoded.sessionType === 'otp' && decoded.sessionExpiry) {
+          if (Date.now() > decoded.sessionExpiry) {
+            return res.status(401).json({
+              authorized: false,
+              error: 'OTP session expired (5-hour limit). Please login again.',
+              code: 'OTP_SESSION_EXPIRED'
+            });
+          }
+        }
+
+        // ── OTP Device Fingerprint Check (3-strike lockout) ───────────────────
+        // Only check if the device has a fingerprint stored (new sessions after this deploy)
+        if (device.deviceFingerprint) {
+          const currentFingerprint = computeFingerprint(userAgent || '');
+
+          if (currentFingerprint !== device.deviceFingerprint) {
+            // Mismatch: a different machine is using this deviceId
+            user.securityIncidentCount = (user.securityIncidentCount || 0) + 1;
+
+            if (user.securityIncidentCount >= 3) {
+              // 3 strikes — full lockout
+              await revokeAllAndLockout(user);
+              return res.status(403).json({
+                authorized: false,
+                error: 'Security lockout: repeated suspicious access attempts detected. Contact your administrator.',
+                code: 'SECURITY_LOCKOUT'
+              });
+            }
+
+            await user.save();
+            return res.status(403).json({
+              authorized: false,
+              error: `Device mismatch detected (attempt ${user.securityIncidentCount}/3). ` +
+                     `${3 - user.securityIncidentCount} more will trigger a security lockout.`,
+              code: 'DEVICE_MISMATCH',
+              attemptsRemaining: 3 - user.securityIncidentCount
+            });
+          }
+
+          // Fingerprint matched — reset incident counter if it was non-zero
+          if (user.securityIncidentCount > 0) {
+            user.securityIncidentCount = 0;
+            await user.save();
+          }
+        }
+
       } else {
         return res.status(403).json({ authorized: false, error: 'Request signature required', code: 'SESSION_KEY_REQUIRED' });
       }

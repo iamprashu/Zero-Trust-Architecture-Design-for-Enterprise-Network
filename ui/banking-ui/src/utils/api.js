@@ -51,25 +51,46 @@ api.interceptors.response.use(
     // Handle 401 — try to refresh the token
     if (error.response?.status === 401 && !originalRequest._retry) {
       originalRequest._retry = true;
-      try {
-        const refreshRes = await axios.post(
-          `${AUTH_URL}/auth/refresh`,
-          {},
-          { withCredentials: true }
-        );
+      
+      if (!window.isRefreshing) {
+        window.isRefreshing = true;
+        window.refreshSubscribers = window.refreshSubscribers || [];
+        
+        try {
+          const refreshRes = await axios.post(
+            `${AUTH_URL}/auth/refresh`,
+            {},
+            { withCredentials: true }
+          );
 
-        const newAccessToken = refreshRes.data?.accessToken;
-        if (newAccessToken) {
-          localStorage.setItem('accessToken', newAccessToken);
-          originalRequest.headers.Authorization = `Bearer ${newAccessToken}`;
+          const newAccessToken = refreshRes.data?.accessToken;
+          if (newAccessToken) {
+            localStorage.setItem('accessToken', newAccessToken);
+            originalRequest.headers.Authorization = `Bearer ${newAccessToken}`;
+          }
+
+          window.isRefreshing = false;
+          window.refreshSubscribers.forEach(cb => cb(newAccessToken));
+          window.refreshSubscribers = [];
+
+          return await api(originalRequest);
+        } catch (refreshError) {
+          window.isRefreshing = false;
+          window.refreshSubscribers = [];
+          localStorage.removeItem('accessToken');
+          localStorage.removeItem('userInfo');
+          window.location.href = '/login';
+          return Promise.reject(refreshError);
         }
-
-        return await api(originalRequest);
-      } catch (refreshError) {
-        localStorage.removeItem('accessToken');
-        localStorage.removeItem('userInfo');
-        window.location.href = '/login';
-        return Promise.reject(refreshError);
+      } else {
+        return new Promise(resolve => {
+          window.refreshSubscribers.push((token) => {
+            if (token) {
+              originalRequest.headers.Authorization = `Bearer ${token}`;
+            }
+            resolve(api(originalRequest));
+          });
+        });
       }
     }
 

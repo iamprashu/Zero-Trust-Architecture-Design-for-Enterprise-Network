@@ -49,14 +49,41 @@ api.interceptors.response.use(
     // 401 — try refresh
     if (error.response && error.response.status === 401 && !originalRequest._retry) {
       originalRequest._retry = true;
-      try {
-        await axios.post(`${AUTH_BASE}/api/auth/refresh`, {}, { withCredentials: true });
-        return api(originalRequest);
-      } catch (refreshError) {
-        localStorage.removeItem('adminToken');
-        localStorage.removeItem('user');
-        window.location.href = '/admin/login';
-        return Promise.reject(refreshError);
+      
+      if (!window.isRefreshing) {
+        window.isRefreshing = true;
+        window.refreshSubscribers = window.refreshSubscribers || [];
+        
+        try {
+          const refreshRes = await axios.post(`${AUTH_BASE}/api/auth/refresh`, {}, { withCredentials: true });
+          const newAccessToken = refreshRes.data?.accessToken;
+          if (newAccessToken) {
+            localStorage.setItem('adminToken', newAccessToken);
+            originalRequest.headers.Authorization = `Bearer ${newAccessToken}`;
+          }
+          
+          window.isRefreshing = false;
+          window.refreshSubscribers.forEach(cb => cb(newAccessToken));
+          window.refreshSubscribers = [];
+          
+          return api(originalRequest);
+        } catch (refreshError) {
+          window.isRefreshing = false;
+          window.refreshSubscribers = [];
+          localStorage.removeItem('adminToken');
+          localStorage.removeItem('user');
+          window.location.href = '/admin/login';
+          return Promise.reject(refreshError);
+        }
+      } else {
+        return new Promise(resolve => {
+          window.refreshSubscribers.push((token) => {
+            if (token) {
+              originalRequest.headers.Authorization = `Bearer ${token}`;
+            }
+            resolve(api(originalRequest));
+          });
+        });
       }
     }
     

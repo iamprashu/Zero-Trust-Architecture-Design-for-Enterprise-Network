@@ -51,16 +51,19 @@ function App() {
             const user = { role: payload.role, userId: payload.userId }
             localStorage.setItem('userInfo', JSON.stringify(user))
             
+            // Initialize session key ONLY for TPM sessions (no OTP flag)
+            if (payload.sessionType !== 'otp') {
+              try {
+                await initializeSessionKey()
+                console.log('Session key initialized — all requests will be cryptographically signed')
+              } catch (e) {
+                console.error('Failed to initialize session key:', e)
+              }
+            }
+
+            // Await is finished, now we can safely authenticate the UI
             setUserInfo(user)
             setIsAuthenticated(true)
-            
-            // Initialize session key — generates ECDSA key pair and registers public key
-            try {
-              await initializeSessionKey()
-              console.log('Session key initialized — all requests will be cryptographically signed')
-            } catch (e) {
-              console.error('Failed to initialize session key:', e)
-            }
             
             // Clear URL
             window.history.replaceState({}, document.title, "/")
@@ -72,19 +75,39 @@ function App() {
           console.error(e)
         }
       } else {
-        const token = localStorage.getItem('accessToken')
-        if (token) {
-          // Page was refreshed — session key is gone, must re-auth
-          // We can try to re-init the session key if the token is still valid
+        // No auth code in URL = page reload or direct navigation.
+        const storedToken = localStorage.getItem('accessToken');
+        if (storedToken) {
           try {
-            await initializeSessionKey()
-            setIsAuthenticated(true)
-            const storedUser = localStorage.getItem('userInfo')
-            if (storedUser) setUserInfo(JSON.parse(storedUser))
-          } catch(e) {
-            // Token expired or invalid — force re-login
-            localStorage.removeItem('accessToken')
-            localStorage.removeItem('userInfo')
+            const payload = JSON.parse(atob(storedToken.split('.')[1]));
+            
+            // If it's an OTP session, we don't need a session key
+            if (payload.sessionType === 'otp') {
+              const userInfo = localStorage.getItem('userInfo');
+              if (userInfo) setUserInfo(JSON.parse(userInfo));
+              setIsAuthenticated(true);
+            } else {
+              // It's a TPM session. Try to restore the session key from IndexedDB.
+              // We MUST wait for this to finish before setting isAuthenticated to true,
+              // otherwise the Dashboard will fire API requests without X-Signature.
+              const { restoreSessionKey } = await import('./utils/crypto');
+              const restored = await restoreSessionKey();
+              
+              if (restored) {
+                const userInfo = localStorage.getItem('userInfo');
+                if (userInfo) setUserInfo(JSON.parse(userInfo));
+                setIsAuthenticated(true);
+              } else {
+                // We have a token but NO session key in IndexedDB.
+                // The ephemeral key is truly lost. Force re-login.
+                localStorage.removeItem('accessToken');
+                localStorage.removeItem('userInfo');
+              }
+            }
+          } catch (e) {
+            console.error('Failed to process stored token:', e);
+            localStorage.removeItem('accessToken');
+            localStorage.removeItem('userInfo');
           }
         }
       }

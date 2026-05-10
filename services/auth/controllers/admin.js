@@ -1,4 +1,4 @@
-const { User, AuditLog, Role, Permission, ApiMapping, WebAuthnCredential, SessionKey } = require('@repo/db');
+const { User, AuditLog, Role, Permission, ApiMapping, WebAuthnCredential, SessionKey, Device } = require('@repo/db');
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 
@@ -347,6 +347,88 @@ exports.revokeAllDevices = async (req, res) => {
 
     res.json({
       message: `All devices revoked (${deletedCount.deletedCount} credentials removed). User must re-register on next login.`
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// ────────────────────────
+// Security Lockout Management
+// ────────────────────────
+
+/**
+ * GET /api/admin/users/security-locked
+ * Returns all users currently in security lockout with their last incident timestamp.
+ * Roles: admin, superadmin
+ */
+exports.getSecurityLockedUsers = async (req, res) => {
+  try {
+    const lockedUsers = await User.find(
+      { securityLockout: true },
+      '-password -refreshToken -authenticatorSecret' // never expose sensitive fields
+    ).lean();
+
+    // Attach the last security_incident audit log for each locked user
+    const results = await Promise.all(
+      lockedUsers.map(async (u) => {
+        const lastIncident = await AuditLog.findOne({
+          userId: u._id,
+          action: 'security_incident'
+        }).sort({ timestamp: -1 }).lean();
+
+        return {
+          user: u,
+          lastIncident: lastIncident?.timestamp || null,
+          incidentCount: u.securityIncidentCount || 0
+        };
+      })
+    );
+
+    res.json({ lockedUsers: results, total: results.length });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+/**
+ * POST /api/admin/users/:userId/unlock-security
+ * Clears the security lockout for a user so they can re-authenticate and re-register their device.
+ *
+ * What is cleared:  securityLockout, securityIncidentCount, isBlocked, refreshToken, all SessionKeys, all Devices
+ * What is KEPT:     authenticatorSecret, isAuthenticatorSetup (TOTP app stays valid — no re-enrollment needed)
+ * Roles: admin, superadmin
+ */
+exports.unlockSecurity = async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const user = await User.findById(userId);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+
+    // Clear lockout state
+    user.securityLockout = false;
+    user.securityIncidentCount = 0;
+    user.isBlocked = false;
+    user.refreshToken = null;
+    // IMPORTANT: authenticatorSecret and isAuthenticatorSetup are INTENTIONALLY preserved.
+    // The user's phone TOTP app remains valid — they do NOT need to re-scan QR code.
+    await user.save();
+
+    // Wipe all active sessions (user must go through full fresh login)
+    await SessionKey.deleteMany({ userId });
+    await Device.deleteMany({ userId });
+
+    // Log the admin action for audit trail
+    await AuditLog.create({
+      userId,
+      action: 'admin_security_unlock'
+    });
+
+    res.json({
+      message: 'Security lockout cleared. User can now re-authenticate and re-register their device.',
+      note: 'TOTP authenticator app is preserved. User does NOT need to re-scan QR code.',
+      unlockedBy: req.user?.userId || 'admin',
+      userId
     });
   } catch (err) {
     res.status(500).json({ error: err.message });

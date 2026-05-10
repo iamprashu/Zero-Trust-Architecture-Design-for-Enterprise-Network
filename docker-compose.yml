@@ -43,6 +43,10 @@ services:
       - WEBAUTHN_RP_NAME=NexusBank
       - WEBAUTHN_RP_ID=localhost
       - WEBAUTHN_ORIGIN=http://localhost
+      # OTP Device Fingerprint Salt — binds OTP sessions to the originating browser/machine.
+      # Value is loaded from the root .env file via docker-compose variable substitution.
+      # Generate: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+      - FINGERPRINT_SALT=${FINGERPRINT_SALT}
     depends_on:
       - mongodb
     deploy:

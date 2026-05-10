@@ -30,7 +30,11 @@ exports.authorize = (requiredPermissions = []) => {
         timestamp: timestamp || undefined,
         method: req.method,
         url: req.originalUrl || req.url,
-        bodyHash
+        bodyHash,
+        // Forward User-Agent so auth service can compare against stored OTP device fingerprint
+        userAgent: req.headers['user-agent'] || '',
+        // Forward deviceId cookie/header for OTP session path
+        deviceId: req.headers['x-device-id'] || req.cookies?.deviceId || undefined
       };
 
       // Call Centralized Auth Service

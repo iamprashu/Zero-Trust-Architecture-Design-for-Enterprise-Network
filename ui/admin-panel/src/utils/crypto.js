@@ -37,7 +37,10 @@ export async function signRequest(method, url, body) {
   const timestamp = Date.now().toString();
 
   // Hash the body
-  const bodyStr = body ? JSON.stringify(body) : '';
+  let bodyStr = '';
+  if (body) {
+    bodyStr = typeof body === 'string' ? body : JSON.stringify(body);
+  }
   const bodyBytes = new TextEncoder().encode(bodyStr);
   const hashBuffer = await crypto.subtle.digest('SHA-256', bodyBytes);
   const hashArray = Array.from(new Uint8Array(hashBuffer));

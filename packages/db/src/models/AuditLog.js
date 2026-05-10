@@ -8,7 +8,11 @@ const auditLogSchema = new mongoose.Schema({
   },
   action: {
     type: String,
-    enum: ['login', 'logout', 'oauth_authorize', 'webauthn_login', 'webauthn_register'],
+    enum: [
+      'login', 'logout', 'oauth_authorize', 'webauthn_login', 'webauthn_register',
+      'security_incident',    // OTP device UA fingerprint mismatch detected
+      'admin_security_unlock' // Admin cleared a user's security lockout
+    ],
     required: true
   },
   timestamp: {

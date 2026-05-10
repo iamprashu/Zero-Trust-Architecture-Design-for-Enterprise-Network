@@ -67,5 +67,10 @@ router.get('/admin/users/:userId/devices', rbacGuard, adminController.getUserDev
 router.delete('/admin/devices/:credentialId', rbacGuard, adminController.revokeDevice);
 router.delete('/admin/users/:userId/devices', rbacGuard, adminController.revokeAllDevices);
 
+// Security Lockout Management
+// NOTE: /security-locked must be declared BEFORE /:userId to avoid route conflict
+router.get('/admin/users/security-locked', rbacGuard, adminController.getSecurityLockedUsers);
+router.post('/admin/users/:userId/unlock-security', rbacGuard, adminController.unlockSecurity);
+
 
 module.exports = router;

@@ -82,6 +82,38 @@ exports.registrationVerify = async (req, res) => {
         .status(400)
         .json({ error: "Challenge expired or not found" });
     }
+
+    // ── Security guards before consuming the challenge ──────────────────────
+
+    // 1. Block if user account is security-locked
+    const user = await User.findById(stored.userId);
+    if (!user) {
+      challengeStore.delete(challengeToken);
+      return res.status(404).json({ error: 'User not found' });
+    }
+    if (user.securityLockout) {
+      challengeStore.delete(challengeToken);
+      return res.status(403).json({
+        error: 'Account is security-locked. Contact your administrator to unlock before registering a new device.'
+      });
+    }
+
+    // 2. Block OTP sessions from registering permanent WebAuthn devices.
+    //    OTP sessions are temporary (5hr) and cannot elevate to long-running TPM sessions.
+    const jwt = require('jsonwebtoken');
+    const token = req.headers.authorization?.split(' ')[1] || req.cookies?.accessToken;
+    if (token) {
+      try {
+        const decoded = jwt.verify(token, process.env.JWT_SECRET || 'default_secret');
+        if (decoded.sessionType === 'otp') {
+          challengeStore.delete(challengeToken);
+          return res.status(403).json({
+            error: 'OTP sessions cannot register permanent devices. Please use your company-authorized TPM device to register.'
+          });
+        }
+      } catch (_) { /* expired/invalid token — let registration proceed, it will fail auth anyway */ }
+    }
+
     challengeStore.delete(challengeToken);
 
     const { verifyRegistrationResponse } = await import("@simplewebauthn/server");
@@ -264,6 +296,15 @@ exports.storeSessionKey = async (req, res) => {
       userId = decoded.userId;
     } catch (e) {
       return res.status(401).json({ error: "Invalid token" });
+    }
+
+    // Guard: block session key registration for security-locked accounts
+    const user = await User.findById(userId);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    if (user.securityLockout) {
+      return res.status(403).json({
+        error: 'Account is security-locked. Contact your administrator.'
+      });
     }
 
     // Remove any existing session keys for this user
