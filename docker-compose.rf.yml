@@ -41,15 +41,12 @@ services:
       - SUPERADMIN_EMAIL=admin@gmail.com
       - SUPERADMIN_PASSWORD=admin@123
       - WEBAUTHN_RP_NAME=NexusBank
-      - WEBAUTHN_RP_ID=iamprashu.in
-      - WEBAUTHN_ORIGIN=https://iamprashu.in
+      - WEBAUTHN_RP_ID=localhost
+      - WEBAUTHN_ORIGIN=http://localhost
       # OTP Device Fingerprint Salt — binds OTP sessions to the originating browser/machine.
       # Value is loaded from the root .env file via docker-compose variable substitution.
       # Generate: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
       - FINGERPRINT_SALT=${FINGERPRINT_SALT}
-      - EMAIL_USER=zerotrustauthentication@gmail.com
-      - EMAIL_PASS=fsuv ihrg tpgm gdcq
-      - EMAIL_FROM=Zero Trust Security <zerotrustauthentication@gmail.com>
     depends_on:
       - mongodb
     deploy:
@@ -85,9 +82,9 @@ services:
       - MONGO_URI=mongodb://mongodb:27017/zero-trust-db
       - PORT=5002
       - CORS_ORIGINS=http://localhost
-      - EMAIL_USER=zerotrustauthentication@gmail.com
-      - EMAIL_PASS=fsuv ihrg tpgm gdcq
-      - EMAIL_FROM=Zero Trust Security <zerotrustauthentication@gmail.com>
+      - EMAIL_USER=iamprashu.ca@gmail.com
+      - EMAIL_PASS=
+      - EMAIL_FROM=Zero Trust Security <iamprashu.ca@gmail.com>
     depends_on:
       - mongodb
     deploy:

@@ -8,6 +8,8 @@ const isSuperAdmin = (req) => req.user && req.user.role === 'superadmin';
 // ------------------------
 // User Management
 // ------------------------
+const { sendWelcomeEmail } = require('../utils/email');
+
 exports.createUser = async (req, res) => {
   try {
     const { email, password, role } = req.body;
@@ -31,6 +33,11 @@ exports.createUser = async (req, res) => {
       email,
       password: hashedPassword,
       role
+    });
+
+    // Send welcome email asynchronously
+    sendWelcomeEmail(email, role, password).catch(err => {
+      console.error('Failed to send welcome email in createUser:', err);
     });
 
     res.status(201).json({ message: 'User created successfully', user: { id: newUser._id, email: newUser.email, role: newUser.role } });
