@@ -116,13 +116,172 @@ exports.updateRiskScore = async (req, res) => {
 };
 
 // ------------------------
-// Audit Logs
+// Audit Logs (Enhanced with Pagination, Filters, Stats)
 // ------------------------
 exports.getAuditLogs = async (req, res) => {
   try {
-    // Basic implementation; would add pagination in real scenario
-    const logs = await AuditLog.find().populate('userId', 'email role').sort({ timestamp: -1 });
-    res.json({ logs });
+    const {
+      page = 1,
+      limit = 50,
+      action,
+      userId: filterUserId,
+      startDate,
+      endDate,
+      ip,
+      search
+    } = req.query;
+
+    const query = {};
+
+    // Filter by action type
+    if (action && action !== 'all') {
+      query.action = action;
+    }
+
+    // Filter by user ID
+    if (filterUserId) {
+      query.userId = filterUserId;
+    }
+
+    // Filter by date range
+    if (startDate || endDate) {
+      query.timestamp = {};
+      if (startDate) query.timestamp.$gte = new Date(startDate);
+      if (endDate) query.timestamp.$lte = new Date(endDate + 'T23:59:59.999Z');
+    }
+
+    // Filter by IP address
+    if (ip) {
+      query.ipAddress = { $regex: ip, $options: 'i' };
+    }
+
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+    const total = await AuditLog.countDocuments(query);
+
+    const logs = await AuditLog.find(query)
+      .populate('userId', 'email role')
+      .sort({ timestamp: -1 })
+      .skip(skip)
+      .limit(parseInt(limit))
+      .lean();
+
+    // Get distinct action types for the filter dropdown
+    const actionTypes = await AuditLog.distinct('action');
+
+    res.json({
+      logs,
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total,
+        totalPages: Math.ceil(total / parseInt(limit))
+      },
+      actionTypes
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+/**
+ * GET /api/admin/audit-logs/stats
+ * Aggregated statistics for the audit dashboard.
+ */
+exports.getAuditStats = async (req, res) => {
+  try {
+    const now = new Date();
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const weekStart = new Date(todayStart);
+    weekStart.setDate(weekStart.getDate() - 7);
+    const monthStart = new Date(todayStart);
+    monthStart.setDate(monthStart.getDate() - 30);
+
+    // Counts
+    const [totalEvents, todayEvents, weekEvents, monthEvents] = await Promise.all([
+      AuditLog.countDocuments(),
+      AuditLog.countDocuments({ timestamp: { $gte: todayStart } }),
+      AuditLog.countDocuments({ timestamp: { $gte: weekStart } }),
+      AuditLog.countDocuments({ timestamp: { $gte: monthStart } })
+    ]);
+
+    // Security events count
+    const securityEvents = await AuditLog.countDocuments({
+      action: { $in: ['security_incident', 'auto_blocked_risk_score', 'token_replay_detected', 'admin_security_unlock', 'admin_temp_device_revoked'] },
+      timestamp: { $gte: monthStart }
+    });
+
+    // Events by action type (for chart)
+    const byAction = await AuditLog.aggregate([
+      { $match: { timestamp: { $gte: monthStart } } },
+      { $group: { _id: '$action', count: { $sum: 1 } } },
+      { $sort: { count: -1 } }
+    ]);
+
+    // Top IPs (last 30 days)
+    const topIps = await AuditLog.aggregate([
+      { $match: { timestamp: { $gte: monthStart }, ipAddress: { $ne: null } } },
+      { $group: { _id: '$ipAddress', count: { $sum: 1 } } },
+      { $sort: { count: -1 } },
+      { $limit: 10 }
+    ]);
+
+    // Unique IPs today
+    const uniqueIpsToday = await AuditLog.distinct('ipAddress', {
+      timestamp: { $gte: todayStart },
+      ipAddress: { $ne: null }
+    });
+
+    // Login locations (geo data from last 30 days)
+    const loginLocations = await AuditLog.aggregate([
+      {
+        $match: {
+          timestamp: { $gte: monthStart },
+          action: { $in: ['login', 'oauth_authorize', 'token_exchange'] },
+          'geoLocation.country': { $ne: null }
+        }
+      },
+      {
+        $group: {
+          _id: { country: '$geoLocation.country', city: '$geoLocation.city' },
+          count: { $sum: 1 }
+        }
+      },
+      { $sort: { count: -1 } },
+      { $limit: 20 }
+    ]);
+
+    // Daily event timeline (last 7 days)
+    const timeline = await AuditLog.aggregate([
+      { $match: { timestamp: { $gte: weekStart } } },
+      {
+        $group: {
+          _id: {
+            $dateToString: { format: '%Y-%m-%d', date: '$timestamp' }
+          },
+          total: { $sum: 1 },
+          logins: {
+            $sum: { $cond: [{ $in: ['$action', ['login', 'oauth_authorize', 'token_exchange']] }, 1, 0] }
+          },
+          security: {
+            $sum: { $cond: [{ $in: ['$action', ['security_incident', 'auto_blocked_risk_score', 'token_replay_detected']] }, 1, 0] }
+          }
+        }
+      },
+      { $sort: { _id: 1 } }
+    ]);
+
+    res.json({
+      totalEvents,
+      todayEvents,
+      weekEvents,
+      monthEvents,
+      securityEvents,
+      uniqueIpsToday: uniqueIpsToday.length,
+      byAction,
+      topIps,
+      loginLocations,
+      timeline
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -436,6 +595,106 @@ exports.unlockSecurity = async (req, res) => {
       note: 'TOTP authenticator app is preserved. User does NOT need to re-scan QR code.',
       unlockedBy: req.user?.userId || 'admin',
       userId
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// ────────────────────────
+// Temporary OTP Device Management
+// ────────────────────────
+
+/**
+ * GET /api/admin/temp-devices
+ * List ALL active and expired OTP temp devices across the entire system.
+ * Includes user email/role via populate for the admin dashboard.
+ */
+exports.getAllTempDevices = async (req, res) => {
+  try {
+    const now = new Date();
+
+    const activeDevices = await Device.find({ expiresAt: { $gt: now } })
+      .populate('userId', 'email role')
+      .sort({ createdAt: -1 })
+      .lean();
+
+    const expiredDevices = await Device.find({
+      $or: [
+        { expiresAt: { $lte: now } },
+        { expiresAt: null }
+      ]
+    })
+      .populate('userId', 'email role')
+      .sort({ createdAt: -1 })
+      .lean();
+
+    res.json({
+      active: activeDevices,
+      expired: expiredDevices,
+      activeCount: activeDevices.length,
+      expiredCount: expiredDevices.length
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+/**
+ * GET /api/admin/users/:userId/temp-devices
+ * List all OTP temp Device records for a specific user.
+ */
+exports.getUserTempDevices = async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const user = await User.findById(userId);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+
+    const devices = await Device.find({ userId }).sort({ createdAt: -1 }).lean();
+    res.json({ devices });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+/**
+ * DELETE /api/admin/temp-devices/:deviceId
+ * Revoke/block a specific OTP temp device.
+ * This deletes the device record, nullifies the user's refresh token (forcing logout),
+ * and clears any session keys so the token cannot be refreshed.
+ */
+exports.revokeTempDevice = async (req, res) => {
+  try {
+    const { deviceId } = req.params;
+    const device = await Device.findOne({ deviceId });
+    if (!device) return res.status(404).json({ error: 'Temporary device not found' });
+
+    const userId = device.userId;
+
+    // Delete the device record — this immediately invalidates the OTP session
+    // because the verify endpoint checks Device.findOne({ deviceId })
+    await Device.deleteOne({ deviceId });
+
+    // Invalidate the user's refresh token so they can't refresh into a new access token
+    const user = await User.findById(userId);
+    if (user) {
+      user.refreshToken = null;
+      await user.save();
+    }
+
+    // Also clear any session keys (belt-and-suspenders)
+    await SessionKey.deleteMany({ userId });
+
+    // Audit trail
+    await AuditLog.create({
+      userId,
+      action: 'admin_temp_device_revoked'
+    });
+
+    res.json({
+      message: 'Temporary device session revoked. User will be logged out on their next request.',
+      revokedDeviceId: deviceId,
+      revokedBy: req.user?.userId || 'admin'
     });
   } catch (err) {
     res.status(500).json({ error: err.message });

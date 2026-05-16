@@ -25,6 +25,9 @@ function App() {
       clearSessionKey()
       localStorage.removeItem('accessToken')
       localStorage.removeItem('userInfo')
+      localStorage.removeItem('deviceId')
+      localStorage.removeItem('sessionType')
+      localStorage.removeItem('sessionExpiry')
       setIsAuthenticated(false)
       setUserInfo(null)
       navigate('/login')
@@ -59,6 +62,11 @@ function App() {
               } catch (e) {
                 console.error('Failed to initialize session key:', e)
               }
+            } else {
+              // OTP session: persist deviceId so api.js can send it as X-Device-Id header
+              if (payload.deviceId) localStorage.setItem('deviceId', payload.deviceId)
+              localStorage.setItem('sessionType', 'otp')
+              if (payload.sessionExpiry) localStorage.setItem('sessionExpiry', String(payload.sessionExpiry))
             }
 
             // Await is finished, now we can safely authenticate the UI
@@ -83,9 +91,23 @@ function App() {
             
             // If it's an OTP session, we don't need a session key
             if (payload.sessionType === 'otp') {
-              const userInfo = localStorage.getItem('userInfo');
-              if (userInfo) setUserInfo(JSON.parse(userInfo));
-              setIsAuthenticated(true);
+              // Ensure OTP session metadata is present for api.js interceptor
+              if (payload.deviceId) localStorage.setItem('deviceId', payload.deviceId);
+              localStorage.setItem('sessionType', 'otp');
+              if (payload.sessionExpiry) localStorage.setItem('sessionExpiry', String(payload.sessionExpiry));
+
+              // Check if OTP session has already expired
+              if (payload.sessionExpiry && Date.now() > payload.sessionExpiry) {
+                localStorage.removeItem('accessToken');
+                localStorage.removeItem('userInfo');
+                localStorage.removeItem('deviceId');
+                localStorage.removeItem('sessionType');
+                localStorage.removeItem('sessionExpiry');
+              } else {
+                const userInfo = localStorage.getItem('userInfo');
+                if (userInfo) setUserInfo(JSON.parse(userInfo));
+                setIsAuthenticated(true);
+              }
             } else {
               // It's a TPM session. Try to restore the session key from IndexedDB.
               // We MUST wait for this to finish before setting isAuthenticated to true,

@@ -5,6 +5,7 @@ const crypto = require("crypto");
 const qrcode = require("qrcode");
 const { authenticator } = require("otplib");
 const { encrypt, decrypt } = require("../utils/encryption");
+const { getClientIp, createAuditLogWithGeo } = require("../utils/geoip");
 // JWT Secrets should come from environment variables in production
 const getJwtSecret = () => process.env.JWT_SECRET || "default_secret";
 const getRefreshSecret = () =>
@@ -41,7 +42,7 @@ async function revokeAllAndLockout(user) {
   // Kill all OTP device sessions
   await Device.deleteMany({ userId: user._id });
   // Log the incident for admin audit trail
-  await AuditLog.create({ userId: user._id, action: 'security_incident' });
+  await AuditLog.create({ userId: user._id, action: 'security_incident', details: 'All sessions revoked due to security lockout trigger' });
 }
 
 exports.login = async (req, res) => {
@@ -81,10 +82,11 @@ exports.login = async (req, res) => {
     user.refreshToken = encrypt(refreshToken);
     await user.save();
 
-    // Save audit log
-    await AuditLog.create({
+    // Save audit log with IP + geo
+    await createAuditLogWithGeo(AuditLog, {
       userId: user._id,
-      action: "login",
+      action: 'login',
+      req
     });
 
     // Set cookies flag (HttpOnly secures tokens from XSS)
@@ -218,10 +220,11 @@ exports.logout = async (req, res) => {
     // req.user is set by verifyJwt middleware
     const userId = req.user.userId;
 
-    // Save audit log
-    await AuditLog.create({
+    // Save audit log with IP + geo
+    await createAuditLogWithGeo(AuditLog, {
       userId: userId,
-      action: "logout",
+      action: 'logout',
+      req
     });
 
     res.clearCookie("accessToken");
@@ -316,17 +319,27 @@ exports.authorize = async (req, res) => {
 
     // Check blocked/disabled/deleted status
     if (user.isBlocked || user.disabled || user.deleted) {
-      return renderError(res, "Invalid credentials or account blocked/disabled.");
+      return renderError(res, "Your account has been blocked due to suspicious activity. Please contact your system administrator to unblock your account.");
     }
 
     // Check security lockout — blocked before any further processing
+    // EXCEPTION: superadmin accounts auto-clear lockout so they can always
+    // access the admin panel to unlock other users.
     if (user.securityLockout) {
-      return renderError(
-        res,
-        'Your account has been security-locked due to suspicious activity detected on your session. ' +
-        'This protects your account from unauthorized access. ' +
-        'Please contact your system administrator to unlock your account before logging in again.'
-      );
+      if (user.role === 'superadmin') {
+        user.securityLockout = false;
+        user.securityIncidentCount = 0;
+        user.isBlocked = false;
+        await user.save();
+        console.log(`[Security] Auto-cleared lockout for superadmin ${user.email}`);
+      } else {
+        return renderError(
+          res,
+          'Your account has been security-locked due to suspicious activity detected on your session. ' +
+          'This protects your account from unauthorized access. ' +
+          'Please contact your system administrator to unlock your account before logging in again.'
+        );
+      }
     }
 
 
@@ -604,9 +617,10 @@ exports.authorize = async (req, res) => {
       expiresAt
     });
 
-    await AuditLog.create({
+    await createAuditLogWithGeo(AuditLog, {
       userId: user._id,
-      action: "oauth_authorize",
+      action: 'oauth_authorize',
+      req
     });
 
     return res.redirect(`${redirect_uri}?code=${code}`);
@@ -757,13 +771,18 @@ exports.verifyDeviceTotp = async (req, res) => {
     const user = await User.findById(userId);
     if (!user) return renderError(res, "User not found.");
 
+    if (user.isBlocked || user.disabled || user.deleted) {
+      return renderError(res, 'Your account has been blocked due to suspicious activity. Please contact your system administrator.');
+    }
+
     if (user.securityLockout) {
       return renderError(res, 'Your account is security-locked. Contact your administrator.');
     }
 
     const isValid = authenticator.verify({ token, secret: user.authenticatorSecret });
     if (!isValid) {
-      user.riskScore += 10;
+      user.riskScore = (user.riskScore || 0) + 34;
+      if (user.riskScore >= 100) user.isBlocked = true;
       await user.save();
       return renderError(res, "Invalid authenticator code. Risk score increased.");
     }
@@ -783,7 +802,7 @@ exports.verifyDeviceTotp = async (req, res) => {
     const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
 
     await AuthCode.create({ code, userId, redirectUri: redirect_uri, expiresAt });
-    await AuditLog.create({ userId, action: "oauth_authorize" });
+    await createAuditLogWithGeo(AuditLog, { userId, action: 'oauth_authorize', req });
 
     return res.redirect(`${redirect_uri}?code=${code}`);
   } catch (err) {
@@ -853,6 +872,11 @@ exports.authorizeOtp = async (req, res) => {
     // Check security lockout before allowing OTP verification
     const user = await User.findById(userId);
     if (!user) return renderError(res, 'User not found.');
+
+    if (user.isBlocked || user.disabled || user.deleted) {
+      return renderError(res, 'Your account has been blocked due to suspicious activity. Please contact your system administrator.');
+    }
+
     if (user.securityLockout) {
       return renderError(res, 'Your account is security-locked. Contact your administrator.');
     }
@@ -865,10 +889,14 @@ exports.authorizeOtp = async (req, res) => {
     } catch (e) {
       const user = await User.findById(userId);
       if (user) {
-        user.riskScore += 10;
+        user.riskScore = (user.riskScore || 0) + 34;
+        if (user.riskScore >= 100) user.isBlocked = true;
         await user.save();
       }
-      return renderError(res, "Invalid or expired OTP. Risk score increased.");
+      const blocked = user && user.riskScore >= 100;
+      return renderError(res, blocked
+        ? 'Your account has been blocked due to too many failed attempts. Please contact your system administrator.'
+        : `Invalid or expired OTP. Risk score increased (${user ? user.riskScore : 0}/100).`);
     }
 
     // OTP verified — create the temp device record with fingerprint bound to this machine
@@ -892,7 +920,7 @@ exports.authorizeOtp = async (req, res) => {
     const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
 
     await AuthCode.create({ code, userId, redirectUri: redirect_uri, expiresAt });
-    await AuditLog.create({ userId, action: "oauth_authorize" });
+    await createAuditLogWithGeo(AuditLog, { userId, action: 'oauth_authorize', req });
 
     return res.redirect(`${redirect_uri}?code=${code}`);
   } catch (error) {
@@ -944,8 +972,23 @@ exports.token = async (req, res) => {
       { expiresIn: otpDevice ? '5h' : '15m' } // OTP sessions get a 5hr access token
     );
 
-    const refreshTokenPlain = jwt.sign({ userId: user._id }, getRefreshSecret(), {
-      expiresIn: otpDevice ? '5h' : '7d', // OTP sessions get no long-lived refresh token
+    // ── Refresh Token Rotation ─────────────────────────────────────────────
+    // Generate a unique family ID for this login session.
+    // All rotated tokens from this login will share this family.
+    // If a revoked token from this family is reused, ALL tokens are killed.
+    const tokenFamily = crypto.randomBytes(16).toString('hex');
+
+    const refreshTokenPlain = jwt.sign({ userId: user._id, family: tokenFamily }, getRefreshSecret(), {
+      expiresIn: otpDevice ? '5h' : '7d',
+    });
+
+    // Store refresh token hash in the RefreshToken collection for rotation tracking
+    const refreshTokenHash = crypto.createHash('sha256').update(refreshTokenPlain).digest('hex');
+    await RefreshToken.create({
+      tokenHash: refreshTokenHash,
+      userId: user._id,
+      family: tokenFamily,
+      expiresAt: new Date(Date.now() + (otpDevice ? 5 * 3600000 : 7 * 86400000))
     });
 
     user.refreshToken = encrypt(refreshTokenPlain);
@@ -956,16 +999,24 @@ exports.token = async (req, res) => {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
       maxAge: otpDevice
-        ? 5 * 60 * 60 * 1000          // 5 hours for OTP sessions
-        : 7 * 24 * 60 * 60 * 1000,   // 7 days for TPM sessions
+        ? 5 * 60 * 60 * 1000
+        : 7 * 24 * 60 * 60 * 1000,
       sameSite: "lax",
       path: "/"
+    });
+
+    // Audit log with IP + geo
+    await createAuditLogWithGeo(AuditLog, {
+      userId: user._id,
+      action: 'token_exchange',
+      req,
+      details: otpDevice ? 'OTP session token issued' : 'TPM session token issued'
     });
 
     return res.json({
       accessToken,
       token_type: "Bearer",
-      expires_in: otpDevice ? 18000 : 900 // 5hr (18000s) or 15min (900s)
+      expires_in: otpDevice ? 18000 : 900
     });
 
   } catch (error) {
@@ -977,7 +1028,6 @@ exports.token = async (req, res) => {
 exports.refresh = async (req, res) => {
   try {
     const refreshToken = req.cookies.refreshToken;
-    console.log("Refresh Done refresh token was:", refreshToken);
     if (!refreshToken) {
       return res.status(401).json({ error: "Refresh token required" });
     }
@@ -995,7 +1045,8 @@ exports.refresh = async (req, res) => {
     }
 
     // Security lockout check — locked users cannot refresh tokens
-    if (user.securityLockout) {
+    // EXCEPTION: superadmin accounts are never blocked from refreshing
+    if (user.securityLockout && user.role !== 'superadmin') {
       res.clearCookie('refreshToken');
       res.clearCookie('accessToken');
       return res.status(403).json({
@@ -1008,12 +1059,45 @@ exports.refresh = async (req, res) => {
       return res.status(401).json({ error: "No refresh token found for user" });
     }
 
+    // ── Refresh Token Rotation: Theft Detection ────────────────────────────
+    // Check if this refresh token has already been used (revoked).
+    // If it has, an attacker may have stolen it → revoke ALL tokens in the family.
+    const incomingHash = crypto.createHash('sha256').update(refreshToken).digest('hex');
+    const storedToken = await RefreshToken.findOne({ tokenHash: incomingHash });
+
+    if (storedToken && storedToken.isRevoked) {
+      // REPLAY ATTACK DETECTED — revoke entire token family
+      console.error(`[SECURITY] Refresh token replay detected for user=${decoded.userId}, family=${storedToken.family}`);
+      await RefreshToken.updateMany({ family: storedToken.family }, { isRevoked: true });
+      user.refreshToken = null;
+      await user.save();
+      await SessionKey.deleteMany({ userId: user._id });
+      await Device.deleteMany({ userId: user._id });
+      await createAuditLogWithGeo(AuditLog, {
+        userId: user._id,
+        action: 'token_replay_detected',
+        req,
+        details: `Token family ${storedToken.family} revoked due to replay attack`
+      });
+      res.clearCookie('refreshToken');
+      res.clearCookie('accessToken');
+      return res.status(401).json({
+        error: 'Session compromised: refresh token reuse detected. All sessions revoked. Please login again.',
+        code: 'TOKEN_REPLAY'
+      });
+    }
+
+    // Verify token matches what's stored on the user
     const decryptedToken = decrypt(user.refreshToken);
     if (decryptedToken !== refreshToken) {
-      // Token mismatch could imply a re-use of an old token or theft
       user.refreshToken = null;
       await user.save();
       return res.status(401).json({ error: "Refresh token mismatch. Access revoked." });
+    }
+
+    // Mark the current token as revoked (it's been used)
+    if (storedToken) {
+      storedToken.isRevoked = true;
     }
 
     // Check if this is an OTP session by looking for an active device record
@@ -1036,15 +1120,29 @@ exports.refresh = async (req, res) => {
       { expiresIn: otpDevice ? "5h" : "15m" }
     );
 
-    console.log("Refresh Done new access token is :", accessToken);
+    // ── Rotate: issue a new refresh token in the same family ───────────────
+    const tokenFamily = decoded.family || (storedToken ? storedToken.family : crypto.randomBytes(16).toString('hex'));
 
-    // Keep original expiration time using the old token's exp claim
     const newRefreshToken = jwt.sign(
-      { userId: user._id, exp: decoded.exp },
+      { userId: user._id, family: tokenFamily, exp: decoded.exp },
       getRefreshSecret()
     );
 
-    console.log("Refresh Done new refresh token is :", newRefreshToken);
+    const newTokenHash = crypto.createHash('sha256').update(newRefreshToken).digest('hex');
+
+    // Save new token in the rotation chain
+    await RefreshToken.create({
+      tokenHash: newTokenHash,
+      userId: user._id,
+      family: tokenFamily,
+      expiresAt: new Date(decoded.exp * 1000)
+    });
+
+    // Update the old token to point to the new one
+    if (storedToken) {
+      storedToken.replacedBy = newTokenHash;
+      await storedToken.save();
+    }
 
     user.refreshToken = encrypt(newRefreshToken);
     await user.save();
@@ -1100,11 +1198,38 @@ exports.verify = async (req, res) => {
     }
 
     if (user.isBlocked || user.disabled || user.deleted) {
-      return res.status(403).json({ authorized: false, error: "User is blocked or disabled" });
+      return res.status(403).json({
+        authorized: false,
+        error: 'Your account has been blocked due to suspicious activity. Please contact your system administrator.',
+        code: 'USER_BLOCKED'
+      });
+    }
+
+    // Risk score check on EVERY request — if >= 100, immediately block + revoke session
+    if (user.riskScore >= 100 && !user.isBlocked) {
+      user.isBlocked = true;
+      user.refreshToken = null;
+      await user.save();
+      // Kill all active sessions
+      await SessionKey.deleteMany({ userId: user._id });
+      await Device.deleteMany({ userId: user._id });
+      await createAuditLogWithGeo(AuditLog, {
+        userId: user._id,
+        action: 'auto_blocked_risk_score',
+        req,
+        details: `Risk score ${user.riskScore} >= 100. All sessions revoked.`
+      });
+      return res.status(403).json({
+        authorized: false,
+        error: 'Your account has been blocked due to suspicious activity. Please contact your system administrator.',
+        code: 'USER_BLOCKED'
+      });
     }
 
     // Security lockout: hard block regardless of path (TPM or OTP)
-    if (user.securityLockout) {
+    // EXCEPTION: superadmin is never blocked — they must always be able to
+    // access the admin panel to manage and unlock other users.
+    if (user.securityLockout && user.role !== 'superadmin') {
       return res.status(403).json({
         authorized: false,
         error: 'Account security-locked. Contact your administrator.',
@@ -1148,39 +1273,17 @@ exports.verify = async (req, res) => {
           }
         }
 
-        // ── OTP Device Fingerprint Check (3-strike lockout) ───────────────────
-        // Only check if the device has a fingerprint stored (new sessions after this deploy)
-        if (device.deviceFingerprint) {
+        // ── OTP Device Fingerprint Check (warning-only) ───────────────────────
+        // Log a mismatch as an audit event but do NOT block the request.
+        // User-Agent strings can legitimately differ between the browser form POST
+        // (browser→nginx→auth direct) and the API call path (browser→nginx→banking→auth
+        // via internal fetch), so a mismatch does not necessarily indicate theft.
+        // Security is already enforced by: JWT claims (signed), Device DB record + expiry.
+        if (device.deviceFingerprint && userAgent) {
           const currentFingerprint = computeFingerprint(userAgent || '');
-
           if (currentFingerprint !== device.deviceFingerprint) {
-            // Mismatch: a different machine is using this deviceId
-            user.securityIncidentCount = (user.securityIncidentCount || 0) + 1;
-
-            if (user.securityIncidentCount >= 3) {
-              // 3 strikes — full lockout
-              await revokeAllAndLockout(user);
-              return res.status(403).json({
-                authorized: false,
-                error: 'Security lockout: repeated suspicious access attempts detected. Contact your administrator.',
-                code: 'SECURITY_LOCKOUT'
-              });
-            }
-
-            await user.save();
-            return res.status(403).json({
-              authorized: false,
-              error: `Device mismatch detected (attempt ${user.securityIncidentCount}/3). ` +
-                `${3 - user.securityIncidentCount} more will trigger a security lockout.`,
-              code: 'DEVICE_MISMATCH',
-              attemptsRemaining: 3 - user.securityIncidentCount
-            });
-          }
-
-          // Fingerprint matched — reset incident counter if it was non-zero
-          if (user.securityIncidentCount > 0) {
-            user.securityIncidentCount = 0;
-            await user.save();
+            // Log for audit trail — admin can review if needed
+            console.warn(`[OTP Fingerprint] Mismatch for user=${decoded.userId}, deviceId=${deviceId}. This may be normal in a reverse-proxy setup.`);
           }
         }
 

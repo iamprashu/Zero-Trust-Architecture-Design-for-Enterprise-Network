@@ -61,6 +61,14 @@ const bootstrapSuperadmin = async () => {
       console.log("Superadmin created successfully.");
     } else {
       console.log("Superadmin already exists.");
+      // Auto-clear any security lockout on the superadmin so they can always manage the system
+      if (existingAdmin.securityLockout || existingAdmin.isBlocked) {
+        existingAdmin.securityLockout = false;
+        existingAdmin.securityIncidentCount = 0;
+        existingAdmin.isBlocked = false;
+        await existingAdmin.save();
+        console.log("Superadmin security lockout auto-cleared on startup.");
+      }
     }
   } catch (error) {
     console.error("Error bootstrapping superadmin:", error);

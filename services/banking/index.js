@@ -8,7 +8,7 @@ const app = express();
 const corsOrigins = (process.env.CORS_ORIGINS || 'http://localhost').split(',');
 const corsOptions = {
   origin: corsOrigins,
-  allowedHeaders: ["Content-Type", "Authorization", "x-device-id"],
+  allowedHeaders: ["Content-Type", "Authorization", "x-device-id", "x-signature", "x-timestamp"],
   credentials: true,
   optionsSuccessStatus: 200,
 };

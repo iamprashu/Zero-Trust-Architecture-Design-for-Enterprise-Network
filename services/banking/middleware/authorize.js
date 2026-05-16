@@ -34,7 +34,9 @@ exports.authorize = (requiredPermissions = []) => {
         // Forward User-Agent so auth service can compare against stored OTP device fingerprint
         userAgent: req.headers['user-agent'] || '',
         // Forward deviceId cookie/header for OTP session path
-        deviceId: req.headers['x-device-id'] || req.cookies?.deviceId || undefined
+        deviceId: req.headers['x-device-id'] || req.cookies?.deviceId || undefined,
+        // Forward client IP for geo-location audit logging
+        clientIp: req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.headers['x-real-ip'] || req.ip || ''
       };
 
       // Call Centralized Auth Service

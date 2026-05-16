@@ -5,21 +5,22 @@ const { verifyJwt, rbacGuard, superAdminGuard } = require('../middleware/authMid
 const authController = require('../controllers/auth');
 const adminController = require('../controllers/admin');
 const webauthnController = require('../controllers/webauthn');
+const { loginLimiter, otpLimiter, otpRequestLimiter, refreshLimiter } = require('../middleware/rateLimiter');
 
 // ----------------------
-// Auth Routes
+// Auth Routes (with rate limiting)
 // ----------------------
 router.get('/login', authController.renderLogin);
-router.post('/auth/login', authController.login); // kept for legacy
-router.post('/auth/authorize', authController.authorize);
+router.post('/auth/login', loginLimiter, authController.login); // kept for legacy
+router.post('/auth/authorize', loginLimiter, authController.authorize);
 router.post('/auth/setup-authenticator', authController.setupAuthenticator);
-router.post('/auth/verify-device-totp', authController.verifyDeviceTotp);
-router.post('/auth/fallback-otp', authController.fallbackOtp);
-router.post('/auth/authorize-otp', authController.authorizeOtp);
+router.post('/auth/verify-device-totp', otpLimiter, authController.verifyDeviceTotp);
+router.post('/auth/fallback-otp', otpRequestLimiter, authController.fallbackOtp);
+router.post('/auth/authorize-otp', otpLimiter, authController.authorizeOtp);
 router.post('/auth/token', authController.token);
 router.post('/auth/verify', authController.verify);
 router.post('/auth/verify-access', authController.verifyAccess);
-router.post('/auth/refresh', authController.refresh);
+router.post('/auth/refresh', refreshLimiter, authController.refresh);
 router.post('/auth/logout', verifyJwt, authController.logout);
 
 // WebAuthn Routes
@@ -44,8 +45,9 @@ router.patch('/admin/users/delete', rbacGuard, adminController.deleteUser);
 router.patch('/admin/users/risk', rbacGuard, adminController.updateRiskScore);
 router.patch('/admin/users/:userId/role', rbacGuard, adminController.updateUserRole);
 
-// Audit Logs
+// Audit Logs (enhanced with pagination, filters, stats)
 router.get('/admin/audit-logs', rbacGuard, adminController.getAuditLogs);
+router.get('/admin/audit-logs/stats', rbacGuard, adminController.getAuditStats);
 
 // Role & Permission Management
 router.post('/admin/roles', rbacGuard, adminController.createRole);
@@ -72,5 +74,9 @@ router.delete('/admin/users/:userId/devices', rbacGuard, adminController.revokeA
 router.get('/admin/users/security-locked', rbacGuard, adminController.getSecurityLockedUsers);
 router.post('/admin/users/:userId/unlock-security', rbacGuard, adminController.unlockSecurity);
 
+// Temporary OTP Device Management
+router.get('/admin/temp-devices', rbacGuard, adminController.getAllTempDevices);
+router.get('/admin/users/:userId/temp-devices', rbacGuard, adminController.getUserTempDevices);
+router.delete('/admin/temp-devices/:deviceId', rbacGuard, adminController.revokeTempDevice);
 
 module.exports = router;

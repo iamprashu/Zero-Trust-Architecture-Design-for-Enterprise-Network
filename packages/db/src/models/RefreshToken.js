@@ -17,6 +17,20 @@ const refreshTokenSchema = new mongoose.Schema({
   isRevoked: {
     type: Boolean,
     default: false
+  },
+  // ── Token Rotation (Theft Detection) ────────────────────────────────────
+  // All tokens from a single login session share the same family ID.
+  // When a token is refreshed, the old one is revoked and `replacedBy` points
+  // to the new token. If a revoked token is reused (replay attack), ALL tokens
+  // in the family are revoked and the user's session is killed.
+  family: {
+    type: String,
+    required: true,
+    index: true
+  },
+  replacedBy: {
+    type: String,
+    default: null
   }
 }, {
   timestamps: true

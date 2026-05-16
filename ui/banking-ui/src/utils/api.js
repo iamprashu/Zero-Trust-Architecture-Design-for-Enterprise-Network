@@ -21,6 +21,23 @@ api.interceptors.request.use(
       config.headers.Authorization = `Bearer ${token}`;
     }
 
+    // Check OTP session expiry before sending request
+    const sessionType = localStorage.getItem('sessionType');
+    if (sessionType === 'otp') {
+      const sessionExpiry = parseInt(localStorage.getItem('sessionExpiry'), 10);
+      if (sessionExpiry && Date.now() > sessionExpiry) {
+        localStorage.removeItem('accessToken');
+        localStorage.removeItem('userInfo');
+        localStorage.removeItem('deviceId');
+        localStorage.removeItem('sessionType');
+        localStorage.removeItem('sessionExpiry');
+        window.dispatchEvent(new CustomEvent('session-expired', {
+          detail: 'Your 5-hour OTP session has expired. Please login again.'
+        }));
+        return Promise.reject(new Error('OTP session expired'));
+      }
+    }
+
     // Sign the request with the in-memory session key
     if (hasSessionKey()) {
       // Build full URL path to match what the server sees in req.originalUrl
@@ -34,6 +51,12 @@ api.interceptors.request.use(
       if (sig) {
         config.headers['X-Signature'] = sig.signature;
         config.headers['X-Timestamp'] = sig.timestamp;
+      }
+    } else {
+      // OTP session: attach deviceId header so the server can validate the temp device session
+      const deviceId = localStorage.getItem('deviceId');
+      if (deviceId) {
+        config.headers['X-Device-Id'] = deviceId;
       }
     }
 
