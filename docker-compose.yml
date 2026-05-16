@@ -41,8 +41,8 @@ services:
       - SUPERADMIN_EMAIL=admin@gmail.com
       - SUPERADMIN_PASSWORD=admin@123
       - WEBAUTHN_RP_NAME=NexusBank
-      - WEBAUTHN_RP_ID=localhost
-      - WEBAUTHN_ORIGIN=http://localhost
+      - WEBAUTHN_RP_ID=iamprashu.in
+      - WEBAUTHN_ORIGIN=https://iamprashu.in
       # OTP Device Fingerprint Salt — binds OTP sessions to the originating browser/machine.
       # Value is loaded from the root .env file via docker-compose variable substitution.
       # Generate: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"

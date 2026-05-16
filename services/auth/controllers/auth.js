@@ -553,7 +553,7 @@ exports.authorize = async (req, res) => {
                 const verData = await verRes.json();
                 if (!verRes.ok) throw new Error(verData.error);
                 statusBox.innerHTML = '<div class="status success">Device registered! Please login again.</div>';
-                setTimeout(() => { window.location.href = 'http://localhost'; }, 2000);
+                setTimeout(() => { window.location.href = 'https://iamprashu.in'; }, 2000);
               } catch (err) {
                 console.error(err);
                 statusBox.innerHTML = '<div class="status error">' + (err.message || 'Registration failed') + '</div>';
@@ -657,7 +657,7 @@ exports.setupAuthenticator = async (req, res) => {
           <div id="statusBox"></div>
           <button id="registerBtn" onclick="startRegistration()">Register Device (Biometric/PIN)</button>
           <div id="skipLink" style="margin-top: 1rem;">
-            <a href="http://localhost">Skip & Login Later</a>
+            <a href="/">Skip & Login Later</a>
           </div>
         </div>
         <script>
@@ -718,7 +718,7 @@ exports.setupAuthenticator = async (req, res) => {
 
               statusBox.innerHTML = '<div class="status success">Device registered! Redirecting to login...</div>';
               document.getElementById('skipLink').innerHTML = '';
-              setTimeout(() => { window.location.href = 'http://localhost'; }, 2000);
+              setTimeout(() => { window.location.href = 'https://iamprashu.in'; }, 2000);
             } catch (err) {
               console.error(err);
               statusBox.innerHTML = '<div class="status error">' + (err.message || 'Registration failed') + '</div>';
@@ -1171,7 +1171,7 @@ exports.verify = async (req, res) => {
             return res.status(403).json({
               authorized: false,
               error: `Device mismatch detected (attempt ${user.securityIncidentCount}/3). ` +
-                     `${3 - user.securityIncidentCount} more will trigger a security lockout.`,
+                `${3 - user.securityIncidentCount} more will trigger a security lockout.`,
               code: 'DEVICE_MISMATCH',
               attemptsRemaining: 3 - user.securityIncidentCount
             });
